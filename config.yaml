@@ -1,0 +1,10 @@
+project_root: "C:/Users/mingk/Desktop/my-ai-agent"
+model_name: "llama3.1-claude"
+skills_root: "C:/Users/mingk/Desktop/my-ai-agent/skills-main/skills"
+max_context_turns: 1000
+max_iterations: 1000
+max_auto_skills: 20
+skill_prompt_chars: 100000
+command_timeout: 3600
+list_output_limit: 0
+include_ignored_files: true
