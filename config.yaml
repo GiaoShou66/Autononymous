@@ -1,5 +1,5 @@
 project_root: ""
-model_name: "llama3.1-claude"
+model_name: ""
 skills_root: ""
 max_context_turns: 1000
 max_iterations: 1000
