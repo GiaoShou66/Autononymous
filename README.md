@@ -101,7 +101,7 @@ You can configure the agent with a `config.yaml` file in the project root:
 model_name: llama3:latest
 max_context_turns: 50
 project_root: C:/path/to/your/project
-skills_root: C:/Users/mingk/Desktop/my-ai-agent/skills-main/skills
+skills_root: C:/path/my-ai-agent/skills-main/skills
 max_iterations: 60
 max_auto_skills: 5
 skill_prompt_chars: 20000
