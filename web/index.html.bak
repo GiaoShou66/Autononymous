@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Agent - 晚间随想</title>
+    <link rel="stylesheet" href="/styles.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <button class="btn-icon" id="toggleSidebar"><i class="fas fa-bars"></i></button>
+            <button class="btn-icon" id="newChat"><i class="fas fa-plus"></i></button>
+        </div>
+        <div class="sidebar-search">
+            <i class="fas fa-search"></i>
+            <input type="text" placeholder="搜索" id="searchInput">
+        </div>
+        <nav class="sidebar-nav">
+            <div class="nav-section">
+                <div class="nav-item active"><i class="fas fa-home"></i><span>首页</span></div>
+                <div class="nav-item"><i class="fas fa-folder"></i><span>管理</span></div>
+                <div class="nav-item"><i class="fas fa-star"></i><span>收藏</span></div>
+                <div class="nav-item"><i class="fas fa-clock"></i><span>近期</span></div>
+            </div>
+            <div class="nav-section">
+                <div class="nav-section-title"><i class="fas fa-chevron-down"></i><span>我的空间</span></div>
+                <div class="conversation-list" id="conversationList"></div>
+            </div>
+        </nav>
+        <div class="sidebar-footer">
+            <div class="user-profile">
+                <img src="https://api.dicebear.com/7.x/avataaars/svg?seed=User" alt="User">
+                <div class="user-info">
+                    <span class="user-name">GlauPhou</span>
+                    <span class="user-status">Pro</span>
+                </div>
+                <button class="btn-icon"><i class="fas fa-ellipsis-h"></i></button>
+            </div>
+        </div>
+    </aside>
+    <main class="main-content">
+        <header class="chat-header">
+            <button class="btn-icon mobile-menu" id="mobileMenu"><i class="fas fa-bars"></i></button>
+            <h1 class="chat-title" id="chatTitle">晚间随想</h1>
+            <div class="header-actions">
+                <button class="btn-icon" id="attachFile"><i class="fas fa-paperclip"></i></button>
+                <button class="btn-icon" id="settings"><i class="fas fa-cog"></i></button>
+            </div>
+        </header>
+        <div class="empty-state" id="emptyState">
+            <div class="empty-state-icon"><i class="fas fa-robot"></i></div>
+            <h2 class="empty-state-title">晚间随想</h2>
+            <p class="empty-state-subtitle">今天我能为你做些什么？</p>
+            <div class="suggested-prompts">
+                <button class="prompt-card" data-prompt="解释一下量子计算的基本原理"><i class="fas fa-atom"></i><span>解释量子计算</span></button>
+                <button class="prompt-card" data-prompt="帮我写一个Python爬虫"><i class="fas fa-code"></i><span>Python爬虫</span></button>
+                <button class="prompt-card" data-prompt="总结一下今天的新闻"><i class="fas fa-newspaper"></i><span>新闻总结</span></button>
+                <button class="prompt-card" data-prompt="创建一个REST API"><i class="fas fa-server"></i><span>REST API</span></button>
+            </div>
+        </div>
+        <div class="chat-container" id="chatContainer" style="display: none;">
+            <div class="messages" id="messages"></div>
+        </div>
+        <div class="input-area">
+            <div class="input-wrapper">
+                <button class="btn-icon" id="addButton"><i class="fas fa-plus"></i></button>
+                <textarea id="messageInput" placeholder="发送消息给 AI..." rows="1"></textarea>
+                <div class="input-actions">
+                    <button class="btn-icon" id="voiceInput"><i class="fas fa-microphone"></i></button>
+                    <button class="btn-icon" id="imageInput"><i class="fas fa-image"></i></button>
+                    <button class="btn-primary" id="sendButton"><i class="fas fa-paper-plane"></i></button>
+                </div>
+            </div>
+            <div class="input-footer">
+                <select id="modeSelect" class="mode-select">
+                    <option value="claude-code">Claude Code</option>
+                    <option value="codex">Codex</option>
+                    <option value="coder">Coder</option>
+                    <option value="coding">Coding</option>
+                    <option value="architect">Architect</option>
+                    <option value="reviewer">Reviewer</option>
+                    <option value="debugger">Debugger</option>
+                    <option value="security">Security</option>
+                    <option value="visualization">Visualization</option>
+                </select>
+                <span class="input-hint">Shift+Enter 换行 · Enter 发送</span>
+            </div>
+        </div>
+    </main>
+    <div class="modal" id="settingsModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>设置</h2>
+                <button class="btn-icon" id="closeModal"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="modal-body">
+                <div class="setting-group">
+                    <label>API Key</label>
+                    <input type="password" id="apiKeyInput" placeholder="输入你的 API Key">
+                </div>
+                <div class="setting-group">
+                    <label>模型</label>
+                    <select id="modelSelect">
+                        <option value="gpt-4">GPT-4</option>
+                        <option value="claude-3-5-sonnet">Claude 3.5 Sonnet</option>
+                        <option value="llama3.1">Llama 3.1</option>
+                    </select>
+                </div>
+                <div class="setting-group">
+                    <label>温度</label>
+                    <input type="range" min="0" max="1" step="0.1" value="0.7" id="temperatureSlider">
+                    <span id="temperatureValue">0.7</span>
+                </div>
+                <div class="setting-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="streamingCheckbox" checked>
+                        <span>启用流式输出</span>
+                    </label>
+                </div>
+                <div class="setting-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="autonomousCheckbox" checked>
+                        <span>启用自主模式</span>
+                    </label>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary" id="cancelSettings">取消</button>
+                <button class="btn-primary" id="saveSettings">保存</button>
+            </div>
+        </div>
+    </div>
+    <script src="index.js"></script>
+</body>
+</html>

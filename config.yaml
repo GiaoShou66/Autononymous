@@ -1,10 +1,93 @@
-project_root: ""
-model_name: ""
-skills_root: ""
+# Fallback model if hybrid routing can't resolve fast/reasoning below.
+model_name: "commandcode:moonshotai/Kimi-K3"
+# Hybrid routing sends short requests to the fast model and complex,
+# multi-step requests to the reasoning model. Both route through the
+# CommandCode AI backend (models.py _CommandCodeBackend) — requires
+# COMMANDCODE_API_KEY as an environment variable. Verified live.
+routing_mode: hybrid
+fast_model: "commandcode:moonshotai/Kimi-K3"
+reasoning_model: "commandcode:deepseek/deepseek-v4-pro"
+# ─── CommandCode API key ───────────────────────────────────────────────────────
+# Do NOT paste a real key here — this file is git-tracked and a committed
+# key stays in git history permanently, even after this line is edited again.
+# Put it in .env.local instead (COMMANDCODE_API_KEY=...), which is NOT
+# git-tracked (see .gitignore) and is loaded automatically on startup.
+commandcode_api_key: ""
+# ─── Autonomous Agent Features ────────────────────────────────────────────────
+# Enable advanced autonomous capabilities
+enable_auto_continuation: true      # Auto-continue long generations
+enable_iteration: true              # Iterative self-improvement
+enable_loops: true                  # Autonomous loop execution
+enable_task_decomposition: true     # Break complex tasks into subtasks
+enable_self_correction: true        # Auto-fix code errors
+enable_streaming: true              # Long-context streaming
+
+max_continuations: 10               # Max auto-continuations
+max_iterations: 20                  # Max improvement iterations
+max_loop_cycles: 100                # Max autonomous loops
+loop_timeout_seconds: 3600          # 1 hour loop timeout
+
+# Enables Ollama's native internal reasoning pass for supported local models
+# such as gpt-oss. Set false if your selected model or Ollama version lacks it.
+reasoning_enabled: true
+# model_name: "treyleo16/claude-mythos-5-1"  # blob missing, needs re-pull
+# model_name: "gpt-oss:20b"                  # blob missing, needs re-pull
+# model_name: "claude-3-5-sonnet-20241022"  # Anthropic Claude (set ANTHROPIC_API_KEY)
+# No more OpenAI chat routing — "gpt-4o" etc. would silently fall through
+# to Ollama now. Use CommandCode AI instead for GPT-family access:
+# model_name: "commandcode:gpt-6-sol"  # see /v1/models for all ids (set COMMANDCODE_API_KEY)
+mode: "unrestricted"
+restrict_to_project: false
+skills_root: "./skills"
 max_context_turns: 1000
 max_iterations: 1000
-max_auto_skills: 20
-skill_prompt_chars: 100000
+max_auto_skills: 5
+skill_prompt_chars: 25000
+request_timeout: 600
 command_timeout: 3600
 list_output_limit: 0
 include_ignored_files: true
+# Persistent memory: the agent remembers lessons across sessions (self-improvement)
+# and folds old conversation turns into a rolling summary instead of discarding them.
+# memory_path defaults to <project_root>/.agent_memory.json when unset.
+memory_path: null
+memory_max_lessons: 200
+# When live history exceeds this many messages, auto-compress the oldest turns
+# into the rolling summary. Set to 0 to disable auto-compaction.
+compact_threshold: 40
+# Autonomous goal loop (/loop <goal>): how many cycles max, and optional
+# seconds to sleep between cycles (0 = run back-to-back).
+loop_max_cycles: 10
+loop_interval_seconds: 0
+# MCP servers the agent connects to at startup. Each entry is either a stdio
+# server (command + args) or a remote server (url + optional headers/transport).
+# ${ENV_VAR} placeholders expand from the environment at connect time.
+mcp_servers:
+  # Local filesystem tools scoped to the project directory (stdio, via npx).
+  filesystem:
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "."]
+
+  # --- More examples (uncomment to enable) ---
+  #
+  # time:                       # tiny stdio server, no network, good smoke test
+  #   command: uvx
+  #   args: ["mcp-server-time"]
+  #
+  # fetch:                      # fetch + convert web pages to markdown
+  #   command: uvx
+  #   args: ["mcp-server-fetch"]
+  #
+  # my_custom:                  # any local stdio server
+  #   command: python
+  #   args: ["path/to/server.py"]
+  #   env:
+  #     API_KEY: "${MY_API_KEY}"
+  #
+  # remote:                     # remote server over HTTP (streamable_http | sse)
+  #   url: "https://mcp.example.com/mcp"
+  #   transport: streamable_http
+  #   headers:
+  #     Authorization: "Bearer ${MCP_TOKEN}"
+
+
