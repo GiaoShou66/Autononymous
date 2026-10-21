@@ -23,7 +23,7 @@ python -m pip install -r requirements.txt
 start_web_panel.bat    # browser web panel (http://localhost:5000)
 ```
 
-On macOS/Linux, use `start_cli.sh` / `start_web_panel.sh` (`chmod +x` them first).
+On macOS/Linux, use `start_web_panel.sh` (`chmod +x` them first).
 
 **Don't double-click `cli.py` or `web\server.py` directly** — without a venv
 active they'll run under whatever Python is system-associated with `.py`
