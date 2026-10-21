@@ -858,7 +858,7 @@ def _print_banner(cfg, agent: Agent, skill_registry, agent_memory, custom_comman
         Panel(
             grid,
             title="[bold green]AI Agent[/bold green]",
-            subtitle="[dim]/help for commands · Tab completes /commands · /exit to quit[/dim]",
+            subtitle="[dim]Type / to see commands · Tab completes · /exit to quit[/dim]",
             border_style="green",
             expand=False,
             padding=(1, 2),
@@ -887,6 +887,12 @@ def _setup_readline(history_file: Path, commands: list[str]) -> None:
     readline.set_completer(completer)
     readline.set_completer_delims(" \t\n")
     readline.parse_and_bind("tab: complete")
+    try:
+        # Show every matching command on the first Tab instead of requiring
+        # a second press, so typing "/" + Tab immediately lists candidates.
+        readline.parse_and_bind("set show-all-if-ambiguous on")
+    except Exception:
+        pass
 
 
 def _save_history(history_file: Path) -> None:
@@ -908,6 +914,109 @@ SLASH_COMMANDS = [
     "/task", "/tasks", "/test", "/todo", "/tokens", "/typing", "/undo", "/upload", "/use",
     "/video", "/videos", "/write",
 ]
+
+# Short description per built-in command, used by the "/" command palette and
+# by "did you mean" suggestions when a typed command doesn't match anything.
+SLASH_COMMAND_HELP = {
+    "/agent": "Delegate a subtask to a fresh subagent",
+    "/approve": "Approve each file change before it applies",
+    "/attach": "Upload a file into the chat",
+    "/audio": "Transcribe and analyze audio",
+    "/auto-skills": "Enable or disable automatic skill matching",
+    "/autocorrect": "Auto-correct code errors",
+    "/autonomous": "Full autonomous mode with task decomposition",
+    "/best": "Sample N answers and keep the best",
+    "/changes": "Show all file changes made this session",
+    "/clear": "Reset conversation context",
+    "/clear-skills": "Clear manually loaded skills",
+    "/commit": "Stage all and commit",
+    "/compact": "Compress old turns into persistent memory",
+    "/continuous": "Continuous coding with auto-continuation",
+    "/cost": "Show estimated token usage this session",
+    "/data": "Profile CSV/TSV/JSON data and optionally chart it",
+    "/delete": "Delete a file from the project",
+    "/delete-session": "Delete a saved conversation",
+    "/diff": "Show git diff for project or file",
+    "/doctor": "Check Ollama connectivity and model install",
+    "/exit": "Exit the agent",
+    "/export": "Export the conversation to a Markdown file",
+    "/export-sft": "Export saved sessions as SFT training data",
+    "/forget": "Clear all memory, or forget lesson number n",
+    "/git": "Run git status, commit, log, branch",
+    "/go": "Pick a session to switch into",
+    "/grep": "Search codebase for regex/text with line numbers",
+    "/help": "Show the command list",
+    "/hooks": "Show lifecycle hooks from .agent/settings.json",
+    "/http": "Fetch a URL and show the text response",
+    "/image": "Analyze a picture with the vision model",
+    "/images": "Analyze a picture with the vision model",
+    "/init": "Scan project and generate a CLAUDE.md",
+    "/iterate": "Iterative generation with self-improvement",
+    "/limits": "Show current capacity settings",
+    "/lines": "Read specific lines with line numbers",
+    "/list": "List files in the project",
+    "/loop": "Run a goal autonomously until done",
+    "/mcp": "Show configured MCP servers and discovered tools",
+    "/media": "Auto-detect media type and analyze",
+    "/memory": "Show persistent memory",
+    "/mkdir": "Create a directory in the project",
+    "/mode": "Switch agent mode",
+    "/model": "Show or switch the active model",
+    "/models": "List models exposed by the current provider",
+    "/modes": "List available agent modes",
+    "/new": "Start a fresh conversation",
+    "/outline": "Show classes, functions, and symbols in file",
+    "/paste": "Paste clipboard into the chat",
+    "/patch": "Apply a patch to a file",
+    "/plan": "Plan mode: agent plans, makes no changes",
+    "/read": "Read a file's contents",
+    "/reasoning": "Toggle native local-model reasoning",
+    "/refine": "Answer, then critique and revise",
+    "/reflect": "Extract lessons from this session into memory",
+    "/remember": "Save a durable lesson to persistent memory",
+    "/rename": "Rename the current conversation",
+    "/resume": "Resume a saved session",
+    "/review": "Review the current git diff",
+    "/routing": "Show fast/reasoning model routing",
+    "/save": "Save this conversation as a session",
+    "/search": "Search the web",
+    "/sessions": "List saved sessions",
+    "/skills": "List skills, or search for matching skills",
+    "/status": "Show session status dashboard",
+    "/stream": "Long-context streaming generation",
+    "/syntax": "Validate Python/JSON/YAML syntax",
+    "/task": "Manage tasks (add, done, clear)",
+    "/tasks": "Show the agent's task list",
+    "/test": "Run test suite",
+    "/todo": "Show the agent's task list",
+    "/tokens": "Show estimated token usage this session",
+    "/typing": "Toggle the typewriter animation / set speed",
+    "/undo": "Revert last file modification from .bak",
+    "/upload": "Upload a file into the chat",
+    "/use": "Keep a skill loaded for future requests",
+    "/video": "Analyze a video (key frames + audio transcript)",
+    "/videos": "Analyze a video (key frames + audio transcript)",
+    "/write": "Write content to a file",
+}
+
+
+def _print_command_palette(custom_commands: dict) -> None:
+    """Show every available /command with a short description (triggered by typing bare '/')."""
+    table = Table(title="Commands (type to filter, e.g. /sess)")
+    table.add_column("Command", style="bold cyan", no_wrap=True)
+    table.add_column("Description")
+    for cmd in SLASH_COMMANDS:
+        table.add_row(cmd, SLASH_COMMAND_HELP.get(cmd, ""))
+    for name in sorted(custom_commands):
+        table.add_row(f"/{name}", "[dim]custom command[/dim]")
+    console.print(table)
+    console.print("[dim]Press Tab after / to autocomplete, or just keep typing.[/dim]")
+
+
+def _suggest_commands(cmd_name: str, custom_commands: dict, limit: int = 3) -> list[str]:
+    """Fuzzy-match an unrecognized /command against known commands for a 'did you mean' hint."""
+    candidates = [c[1:] for c in SLASH_COMMANDS] + list(custom_commands)
+    return [f"/{c}" for c in difflib.get_close_matches(cmd_name, candidates, n=limit, cutoff=0.5)]
 
 
 def _print_skills(registry: SkillRegistry, query: str | None = None) -> None:
@@ -1277,6 +1386,10 @@ def main(
 
         stripped = user_input.strip().lstrip("\ufeff")
         if not stripped:
+            continue
+
+        if stripped == "/":
+            _print_command_palette(custom_commands)
             continue
 
         if stripped in {"/exit", ":q"}:
@@ -2314,7 +2427,15 @@ def main(
                 message_to_send = template.replace("$ARGUMENTS", cmd_args)
                 console.print(f"[dim]Running custom command /{cmd_name}...[/dim]")
             else:
-                console.print(f"[yellow]Unknown command: {stripped.split()[0]}. Try /help.[/yellow]")
+                typed = stripped.split()[0]
+                suggestions = _suggest_commands(cmd_name, custom_commands)
+                if suggestions:
+                    console.print(
+                        f"[yellow]Unknown command: {typed}.[/yellow] "
+                        f"Did you mean [bold cyan]{' or '.join(suggestions)}[/bold cyan]?"
+                    )
+                else:
+                    console.print(f"[yellow]Unknown command: {typed}. Try /help.[/yellow]")
                 continue
         else:
             # Expand @file mentions into inline file contents.
