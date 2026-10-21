@@ -1,4 +1,4 @@
-# AI Agent
+# Autononymous
 
 A local, unrestricted AI coding agent with two interfaces — a terminal CLI and a
 browser-based web panel — backed by your choice of model (local Ollama,
