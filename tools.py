@@ -542,7 +542,7 @@ def http_request(
     if method not in allowed:
         raise ValueError(f"Unsupported HTTP method: {method}")
 
-    req_headers = {"User-Agent": "my-ai-agent/1.0"}
+    req_headers = {"User-Agent": "# Autononymous/1.0"}
     if headers:
         req_headers.update(headers)
 

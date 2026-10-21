@@ -1,6 +1,6 @@
 # Autononymous
 
-> **For educational and legal use only.** User bears sole responsibility for compliance with applicable laws and third-party terms of service.
+> **For educational and legal use only.** User bears sole responsibility for compliance with applicable laws and third-party terms of service. The author assumes no responsibility or liability for any illegal use of this software by others.
 
 A local, unrestricted AI coding agent with two interfaces — a terminal CLI and a
 browser-based web panel — backed by your choice of model (local Ollama,
