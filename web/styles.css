@@ -671,6 +671,108 @@ body {
     cursor: default;
 }
 
+/* ask_user_question tool UI (distinct from the ```ask / ```ask-multi
+   fenced-block shortcut above): supports per-option descriptions, a
+   breadcrumb across multi-question batches, and a free-text fallback. */
+.question-breadcrumb {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-bottom: 10px;
+}
+
+.question-breadcrumb .current {
+    color: var(--accent);
+    font-weight: 700;
+}
+
+.question-breadcrumb .done {
+    color: var(--text-secondary);
+}
+
+.question-breadcrumb i {
+    font-size: 9px;
+    opacity: 0.6;
+}
+
+.question-option-item {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+}
+
+.question-option-desc {
+    margin-top: 3px;
+    padding-left: 2px;
+    font-size: 12px;
+    font-weight: 400;
+    color: var(--text-secondary);
+}
+
+.question-option-checkbox .question-option-desc {
+    margin-top: 1px;
+    padding-left: 0;
+}
+
+.question-other-row {
+    display: flex;
+    gap: 8px;
+    margin-top: 12px;
+}
+
+.question-other-input {
+    flex: 1;
+    padding: 8px 12px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 11px;
+    color: var(--text-primary);
+    font-size: 13.5px;
+}
+
+.question-other-input:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+.question-other-submit {
+    padding: 8px 14px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 11px;
+    color: var(--text-primary);
+    font-size: 13.5px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: border-color 0.12s, background 0.12s;
+}
+
+.question-other-submit:hover:not(:disabled) {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+}
+
+.question-other-submit:disabled,
+.question-other-input:disabled {
+    opacity: 0.55;
+    cursor: default;
+}
+
+.question-answered {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13.5px;
+    color: var(--text-secondary);
+}
+
+.question-answered i {
+    color: var(--accent);
+}
+
 .message-actions {
     margin-top: 6px;
     margin-left: 40px;
