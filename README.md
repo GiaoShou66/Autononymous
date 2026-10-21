@@ -1,443 +1,242 @@
-# 🤖 AI Agent - Autonomous Coding Assistant
+# AI Agent
 
-An advanced AI-powered coding assistant with autonomous capabilities, multi-model support, and a modern web interface. Built for developers who want production-quality code generation, debugging, and system design.
+A local, unrestricted AI coding agent with two interfaces — a terminal CLI and a
+browser-based web panel — backed by your choice of model (local Ollama,
+Anthropic Claude, DeepSeek, OpenRouter, or the multi-provider CommandCode AI
+gateway). Beyond plain chat it does compiler-checked writes, draft/critique/
+revise reflection, best-of-N sampling, and whole-repo hierarchical retrieval —
+see [Code-quality & reasoning features](#code-quality--reasoning-features).
 
-[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
-[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Code Style](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
+## Quick Start
 
-## ✨ Features
+```powershell
+# 1. Create and activate a virtual environment
+python -m venv .venv
+.venv\Scripts\activate
 
-### 🎨 Modern Web Interface
-- ChatGPT-style UI with real-time streaming
-- Multi-conversation management
-- File upload support (images, documents)
-- Dark/light theme
-- Mobile responsive
+# 2. Install dependencies
+python -m pip install -r requirements.txt
 
-### 🤖 Autonomous Agent Capabilities
-- **Continuous Coding**: Auto-continuation for long implementations
-- **Task Decomposition**: Breaks complex tasks into manageable subtasks
-- **Iterative Generation**: Self-improvement loops for higher quality
-- **Auto-Correction**: Automatic syntax error detection and fixing
-- **Long-Context Streaming**: Real-time feedback during generation
-
-### 🧠 Multiple Agent Modes
-- **Claude Code**: RAW protocol (Read-Analyze-Write) with production standards
-- **Codex**: Algorithmic thinking with exhaustive testing
-- **Coder**: Fast, direct code changes
-- **Coding**: Professional software engineering approach
-- **Architect**: System design and architecture
-- **Reviewer**: Code review and security analysis
-- **Debugger**: Error diagnosis and fixing
-- **Security**: Security-focused analysis
-- **Visualization**: Data visualization and charts
-
-### 🔌 Multi-Model Support
-- **Ollama**: Local models (Llama, Mistral, Qwen, etc.)
-- **Anthropic Claude**: Claude 3.5 Sonnet, Opus, Haiku
-- **CommandCode AI**: Gateway to 20+ providers (DeepSeek, GPT, Gemini, etc.)
-- **Custom APIs**: Any OpenAI-compatible endpoint
-
-### 🛠️ Developer Tools
-- Code analysis and refactoring
-- Git integration (status, diff, commit)
-- Syntax validation
-- File operations with undo support
-- Grep search across codebase
-- AST-based code outline extraction
-
-### 🎯 Multimodal Capabilities
-- Image analysis and description
-- Video frame extraction and analysis
-- Audio transcription
-- Document analysis (PDF, DOCX)
-- Data visualization (CSV, JSON)
-
-### 🌐 Internet Access
-- Web search (DuckDuckGo)
-- URL fetching
-- REST API calls
-- Real-time information retrieval
-
-## 🚀 Quick Start
-
-### Installation
-
-1. **Clone the repository:**
-   ```bash
-   git clone https://github.com/yourusername/my-ai-agent.git
-   cd my-ai-agent
-   ```
-
-2. **Create virtual environment:**
-   ```bash
-   python -m venv .venv
-   source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-   ```
-
-3. **Install dependencies:**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-4. **Configure API keys:**
-   
-   Create `.env.local` file:
-   ```bash
-   ANTHROPIC_API_KEY=your-anthropic-key
-   COMMANDCODE_API_KEY=your-commandcode-key
-   ```
-
-### Usage
-
-#### Web Interface (Recommended)
-
-Start the web panel:
-```bash
-# Windows
-start_web_panel.bat
-
-# Linux/Mac
-./start_web_panel.sh
+# 3. Run it
+start_cli.bat          # terminal CLI
+start_web_panel.bat    # browser web panel (http://localhost:5000)
 ```
 
-Open browser: http://localhost:5000
+On macOS/Linux, use `start_cli.sh` / `start_web_panel.sh` (`chmod +x` them first).
 
-#### Command Line Interface
+**Don't double-click `cli.py` or `web\server.py` directly** — without a venv
+active they'll run under whatever Python is system-associated with `.py`
+files, which usually lacks the dependencies and vanishes the console window
+the instant it crashes. The `start_*` scripts activate the venv, install
+missing dependencies, and keep the window open.
 
-Interactive mode:
-```bash
-python cli.py
+### Use `python -m pip`, not bare `pip`
+
+If you ever see `Fatal error in launcher: Unable to create process...`, your
+venv's `pip.exe` has a broken embedded path (common after renaming or moving
+the project folder). Reinstall with:
+
+```powershell
+.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-Single command:
-```bash
-python cli.py "Write a Python function to sort a list"
+`-m pip` goes through `python.exe` directly and ignores `pip.exe`'s broken
+launcher stub entirely.
+
+## Two interfaces
+
+### CLI (`cli.py`)
+
+An interactive terminal REPL. Run `start_cli.bat`, then type `/help` for the
+full command list. Highlights:
+
+| Category | Commands |
+|---|---|
+| Files & code | `/read /write /patch /delete /grep /outline /lines /syntax /diff /git /undo` |
+| Reasoning | `/refine [rounds=N] <prompt>` (answer, then critique and revise), `/best [n=N] <prompt>` (sample N, keep the strongest) — see below |
+| Memory (self-improvement) | `/memory /remember /reflect /forget /compact` — the agent keeps lessons across sessions in `.agent_memory.json` |
+| Planning | `/plan /approve /todo /task` — plan mode, edit approval, a task list |
+| Sessions | `/save /resume /go /sessions /new /rename /delete-session`, `/export-sft [path]` (export sessions as SFT training data) — conversations persist to `.agent_sessions/` |
+| Model & routing | `/model /models /routing /reasoning` |
+| Autonomy | `/loop <goal>` (runs until done or max cycles), `/agent <task>` (spawns a subagent), `/continuous /iterate /autonomous /stream /autocorrect` |
+| Media | `/image /audio /video /media /data` |
+| Misc | `/upload /paste @file !command #note /hooks /mcp /status /review /commit` |
+
+Tab-completes slash commands and keeps prompt history across sessions
+(`pyreadline3` on Windows, stdlib `readline` elsewhere). **Ctrl-C during a
+reply stops just that generation** — whatever text had already streamed is
+kept, not lost — instead of killing the whole REPL.
+
+### Web Panel (`web/server.py`)
+
+A Flask server with a browser chat UI (`web/index.html`, `index.js`,
+`styles.css`). Run `start_web_panel.bat`, open `http://localhost:5000`.
+Supports chat, streaming, file upload, mode/model switching, and the
+autonomous task runner, over a JSON/SSE API (`/api/chat`, `/api/chat/stream`,
+`/api/upload`, `/api/autonomous/<command>`, `/api/routing`, `/api/clear`,
+`/api/modes`, `/api/models`, ...).
+
+- **Stop button** cancels an in-flight reply (streaming keeps whatever text
+  already arrived; autonomous mode has no partial output to keep, so it just
+  stops).
+- **Settings → Routing Mode**: switch between a single model and hybrid
+  (separate fast/reasoning model pickers) live, without restarting the
+  server — writes through `/api/routing`.
+- **Theme toggle** (sidebar moon/sun icon) flips light/dark, saved in
+  `localStorage`. **Sidebar toggle** collapses the sidebar away on desktop;
+  on narrow/mobile widths it's the usual off-canvas slide-in instead.
+- When the agent needs you to choose between options, it can end a reply
+  with a fenced ` ```ask ` (single choice, click to send) or ` ```ask-multi `
+  (checkboxes + Submit, sent as the chosen options joined with `, `) block —
+  see `SYSTEM_PROMPT` in `agent.py` for the exact format.
+- "New chat" / switching conversations clears the server's conversation
+  state (`/api/clear`) so old context, including anything the model said
+  about itself earlier, doesn't bleed into the next conversation. Resuming
+  an older conversation does **not** yet replay its history back into the
+  live agent — only the newest conversation's turns are ever live on the
+  server at once.
+
+> There is a second, separate web backend in this repo, `webui.py`
+> (Starlette-based). It is currently **not usable** — its frontend files
+> (`web/app.js`, `web/style.css`) were overwritten when the Flask panel's
+> files were added to the same `web/` directory under different names. Use
+> `web/server.py` via `start_web_panel.bat`, not `webui.py`, until that's
+> sorted out.
+
+## Model backends
+
+Set `model_name` in `config.yaml`:
+
+| Backend | `model_name` example | Key |
+|---|---|---|
+| Ollama (local, default) | `llama3.1:8b` | none |
+| Anthropic Claude | `claude-3-5-sonnet-20241022` | `ANTHROPIC_API_KEY` |
+| CommandCode AI (gateway to DeepSeek, Kimi, GPT, GLM, Qwen, Gemini, Grok, Mistral, ...) | `commandcode:deepseek/deepseek-v4-pro` | `COMMANDCODE_API_KEY` |
+| DeepSeek (direct) | `deepseek:deepseek-chat` or `deepseek:deepseek-reasoner` | `DEEPSEEK_API_KEY` |
+| OpenRouter (470+ models) | `openrouter:anthropic/claude-3.5-sonnet` | `OPENROUTER_API_KEY` |
+| Custom OpenAI-compatible endpoint | any name, with `custom_model_url` set | `CUSTOM_MODEL_KEY` |
+
+> `claude-*` model ids routed through **CommandCode** only work via its
+> `/messages` endpoint, not `/chat/completions` — they'll 400 through this
+> gateway. Use `claude-*` directly (Anthropic Claude row above) instead.
+
+**Hybrid routing**: set `routing_mode: hybrid` plus `fast_model` and
+`reasoning_model` in `config.yaml` to automatically route short/simple
+messages to a fast model and long/complex ones (keyword- and length-based
+heuristic, no extra classifier call) to a stronger one. See `/routing` in
+the CLI or the routing dropdowns in the web panel.
+
+### API keys — never in `config.yaml`
+
+`config.yaml` is git-tracked. Put keys in **`.env.local`** instead (same
+directory, already in `.gitignore`, loaded automatically on startup):
+
+```
+COMMANDCODE_API_KEY=your-key-here
+ANTHROPIC_API_KEY=your-key-here
+DEEPSEEK_API_KEY=your-key-here
+OPENROUTER_API_KEY=your-key-here
 ```
 
-With specific mode:
-```bash
-python cli.py "Fix this bug" --mode debugger
-```
+A value already set in your shell environment always takes precedence over
+`.env.local`.
 
-#### Python API
+## Code-quality & reasoning features
 
-```python
-from agent import Agent
-from autonomous import AutonomousAgent, AutonomousConfig
+These run inside the normal agent loop (`agent.py`) in both interfaces, no
+separate setup:
 
-# Create agent
-agent = Agent(project_path=".", mode="claude-code")
+- **Compiler-in-the-loop** (`verify.py`) — right after `write_file` or
+  `apply_patch`, the written file is syntax-checked (Python compiled to
+  bytecode in memory, JSON/YAML parsed, JavaScript via `node --check`; none
+  of it executes the file) and any error is fed back to the model on the
+  next step. `Agent.compiler_in_loop` (default `True`) turns it off.
+- **Reflection** (`reasoning.py`, `/refine` in the CLI) — draft, critique,
+  revise, repeated until the critic approves or the round budget runs out.
+- **Best-of-N** (`reasoning.py`, `/best` in the CLI) — sample several
+  independent answers and have the model pick the strongest; text-only, no
+  tool calls during sampling.
+- **Hierarchical retrieval** (`retrieval.py`, the agent's own
+  `search_codebase` tool) — directories are ranked first by the vocabulary
+  of the files they contain, then only files inside the best directories are
+  ranked individually, each hit with a real one-line summary (docstring,
+  headings, or top-level symbols with line numbers). No embeddings, rebuilds
+  itself only when files actually change.
+- **Context alignment** (`Agent.context_alignment`, default `True`) — before
+  each model call, the files most relevant to your latest message (via the
+  same index) are appended as grounding context, so long tool-calling turns
+  stay anchored to what the code actually does.
+- **SFT export** (`sft_export.py`, `/export-sft [path]`) — turns saved
+  sessions into a standard chat-SFT JSONL file (`{"messages": [...]}` per
+  line) for an actual external fine-tuning pipeline. Tool-call turns and
+  placeholder/error replies are filtered out; this project doesn't train
+  models itself.
 
-# Simple usage
-response = agent.ask("Create a REST API with Flask")
+## Configuration
 
-# With autonomous features
-config = AutonomousConfig(
-    enable_auto_continuation=True,
-    enable_iteration=True,
-    enable_task_decomposition=True
-)
-auto_agent = AutonomousAgent(agent, config)
-result = auto_agent.continuous_code("Build a full authentication system")
-```
+Everything lives in `config.yaml`. Key sections:
 
-## 📖 Documentation
+- **Model & routing**: `model_name`, `routing_mode`, `fast_model`,
+  `reasoning_model`, `reasoning_enabled`
+- **Limits**: `max_context_turns`, `max_iterations`, `command_timeout`,
+  `request_timeout`
+- **Memory**: `memory_path`, `memory_max_lessons`, `compact_threshold`
+- **Autonomous features**: `enable_auto_continuation`, `enable_iteration`,
+  `enable_loops`, `enable_task_decomposition`, `enable_self_correction`,
+  `enable_streaming`, plus their `max_*` / timeout counterparts
+- **MCP servers**: `mcp_servers` — stdio or remote tool servers the agent
+  connects to at startup (filesystem access is enabled by default)
 
-- [Web Panel Quick Start](WEB_PANEL_QUICKSTART.md) - Get started in 3 minutes
-- [Web Panel Guide](WEB_PANEL_GUIDE.md) - Complete web interface documentation
-- [Autonomous Features](AUTONOMOUS_FEATURES.md) - Deep dive into autonomous capabilities
-- [Anthropic Setup](ANTHROPIC_SETUP.md) - Claude API configuration
-- [Configuration Guide](CONFIG_GUIDE.md) - All configuration options
-
-## 🎯 Use Cases
-
-### Code Generation
-```python
-agent = Agent(mode="claude-code")
-agent.ask("Create a Python web scraper with error handling")
-```
-
-### Bug Fixing
-```python
-agent = Agent(mode="debugger")
-agent.ask("Fix this error: TypeError: 'NoneType' object is not subscriptable")
-```
-
-### Code Review
-```python
-agent = Agent(mode="reviewer")
-agent.ask("Review this authentication code for security issues")
-```
-
-### System Design
-```python
-agent = Agent(mode="architect")
-agent.ask("Design a scalable microservices architecture for e-commerce")
-```
-
-### Data Visualization
-```python
-agent = Agent(mode="visualization")
-agent.ask("Create an interactive dashboard for sales data")
-```
-
-## ⚙️ Configuration
-
-### config.yaml
-
-```yaml
-# Model Configuration
-model: claude-3-5-sonnet-20241022
-timeout: 300
-
-# API Keys (use environment variables instead)
-# anthropic_api_key: ""
-# commandcode_api_key: ""
-
-# Agent Modes
-default_mode: claude-code
-
-# Autonomous Features
-autonomous:
-  enable_auto_continuation: true
-  enable_iteration: true
-  enable_task_decomposition: true
-  enable_self_correction: true
-  enable_streaming: true
-  max_continuations: 10
-  max_iterations: 20
-
-# Model Routing (optional)
-routing_mode: single  # or 'hybrid'
-fast_model: llama3:latest
-reasoning_model: deepseek-r1:latest
-```
-
-### Environment Variables
-
-```bash
-# API Keys
-ANTHROPIC_API_KEY=sk-ant-...
-COMMANDCODE_API_KEY=cmd-...
-
-# Ollama Configuration
-OLLAMA_BASE_URL=http://localhost:11434
-OLLAMA_TIMEOUT=300
-OLLAMA_NUM_PREDICT=4096
-
-# Custom Backend
-CUSTOM_MODEL_URL=https://your-api.com/v1
-CUSTOM_MODEL_KEY=your-key
-
-# Agent Behavior
-AI_AGENT_REASONING=true
-```
-
-## 🏗️ Architecture
+## Project layout
 
 ```
 my-ai-agent/
-├── agent.py              # Main agent logic
-├── autonomous.py         # Autonomous features
-├── models.py            # Multi-model backend
-├── cli.py               # Command-line interface
-├── webui_server.py      # Web panel backend
-├── tools.py             # Developer tools
-├── media.py             # Multimodal capabilities
-├── memory.py            # Conversation memory
-├── hooks.py             # Event hooks
-├── config.py            # Configuration management
-├── sessions.py          # Session management
-├── panel/               # Web UI frontend
-│   ├── index.html
-│   ├── index.js
-│   └── styles.css
-├── config.yaml          # Configuration file
-└── requirements.txt     # Python dependencies
+├── agent.py              # Core agent loop, tool dispatch, hooks/memory wiring
+├── cli.py                # Terminal REPL (start_cli.bat/.sh)
+├── webui.py               # Starlette web backend — currently broken, see above
+├── web/
+│   ├── server.py          # Flask web backend (start_web_panel.bat/.sh) — the working one
+│   ├── index.html, index.js, styles.css
+├── autonomous.py         # /continuous, /iterate, /autonomous, /stream, /autocorrect
+├── models.py              # Ollama / Anthropic / DeepSeek / OpenRouter / CommandCode / custom backends, hybrid routing
+├── verify.py               # Compiler-in-the-loop syntax checks
+├── reasoning.py             # Reflection loop + best-of-N
+├── retrieval.py              # Hierarchical codebase search + map-reduce summarization
+├── sft_export.py              # Saved sessions -> chat-SFT JSONL
+├── config.py / config.yaml / .env.local   # Configuration + secrets
+├── tools.py                # File, git, shell, grep/outline tools
+├── memory.py                # Persistent cross-session memory
+├── sessions.py               # Save/resume conversations
+├── hooks.py                   # PreToolUse/PostToolUse/UserPromptSubmit/Stop hooks
+├── skills.py                   # Claude-style SKILL.md loading
+├── media.py                     # Image/audio/video analysis
+├── mcp_client.py                 # MCP server connections
+├── diffutil.py                    # Shared diff computation
+├── skills/                         # Bundled skill definitions
+├── LICENSE                          # MIT
+└── requirements.txt
 ```
 
-## 🔧 Advanced Features
+## Troubleshooting
 
-### Custom Agent Modes
+**`[WinError 5] Access is denied` on `.agent_sessions\*.json.tmp`** — a
+transient Windows file lock (antivirus scan, or two agent processes saving
+the same session at once). Session saves retry automatically with backoff;
+if it persists, check for and close duplicate running `cli.py`/`web/server.py`
+instances (`tasklist /FI "IMAGENAME eq python.exe"`).
 
-Add your own modes in `agent.py`:
+**`Fatal error in launcher`** — see "Use `python -m pip`, not bare `pip`"
+above.
 
-```python
-ROLE_PROMPTS = {
-    "my-custom-mode": (
-        "Current mode: my-custom-mode. "
-        "Your custom instructions here..."
-    ),
-}
-```
+**`402 Payment Required` from Ollama** — you selected a `:cloud`-suffixed
+model (e.g. `deepseek-v4-pro:cloud`), which routes through Ollama's paid
+hosted tier, not your local install. Switch to a model you've actually
+pulled (`ollama list`) or to CommandCode AI.
 
-### Hook System
+**Web panel: `ModuleNotFoundError: No module named 'flask'`** — your venv's
+dependencies didn't install; run
+`.venv\Scripts\python.exe -m pip install -r requirements.txt` manually.
 
-Create automated workflows:
+## License
 
-```python
-from hooks import HookManager
-
-hooks = HookManager()
-
-# Run tests on file save
-@hooks.on_file_save("*.py")
-def run_tests(filepath):
-    return {"command": "pytest"}
-```
-
-### MCP Integration
-
-Connect to Model Context Protocol servers:
-
-```bash
-# Install MCP server
-uvx install your-mcp-server
-
-# Use in agent
-agent.use_mcp_tool("server_name", "tool_name", args)
-```
-
-### Memory System
-
-Persistent conversation memory:
-
-```python
-from memory import AgentMemory
-
-memory = AgentMemory()
-memory.remember("user-preference", "User prefers TypeScript")
-preference = memory.recall("user-preference")
-```
-
-## 🧪 Testing
-
-Run tests:
-```bash
-pytest tests/
-```
-
-Run with coverage:
-```bash
-pytest --cov=. tests/
-```
-
-Specific test:
-```bash
-pytest tests/test_agent.py::test_code_generation
-```
-
-## 🤝 Contributing
-
-Contributions are welcome! Please follow these steps:
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-### Development Setup
-
-```bash
-# Install dev dependencies
-pip install -r requirements-dev.txt
-
-# Run linters
-ruff check .
-black .
-
-# Run tests
-pytest
-```
-
-## 📋 Requirements
-
-- Python 3.8 or higher
-- 4GB RAM minimum (8GB recommended)
-- Internet connection (for non-local models)
-- Modern web browser (for web interface)
-
-### Optional:
-- Ollama (for local models)
-- ffmpeg (for video analysis)
-- Git (for version control features)
-
-## 🐛 Troubleshooting
-
-### "Response ended prematurely"
-- Check internet connection
-- Verify API keys
-- Increase timeout in config
-- Try a different model
-
-### "Module not found"
-- Reinstall dependencies: `pip install -r requirements.txt`
-- Activate virtual environment
-- Check Python version
-
-### Web panel won't start
-- Check port 5000 is available
-- Install Flask: `pip install flask flask-cors`
-- Check firewall settings
-
-See [Troubleshooting Guide](TROUBLESHOOTING.md) for more solutions.
-
-## 📊 Performance
-
-- **Response time**: 1-30 seconds (depends on model and task complexity)
-- **Throughput**: 100+ tokens/second (local models)
-- **Memory usage**: 2-8GB (depends on model size)
-- **Concurrent sessions**: 10+ (depends on hardware)
-
-## 🔐 Security
-
-- API keys stored in environment variables (never in git)
-- Input validation and sanitization
-- CORS protection
-- Rate limiting support
-- No code execution without user confirmation
-
-## 📜 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 🙏 Acknowledgments
-
-- [Anthropic](https://anthropic.com) for Claude API
-- [Ollama](https://ollama.ai) for local model support
-- [CommandCode AI](https://commandcode.ai) for multi-provider gateway
-- The open-source community
-
-## 📞 Support
-
-- **Documentation**: See `docs/` folder
-- **Issues**: Open a GitHub issue
-- **Discussions**: Use GitHub Discussions
-- **Email**: support@example.com
-
-## 🗺️ Roadmap
-
-- [ ] Voice input/output
-- [ ] Plugin system
-- [ ] Multi-user support
-- [ ] Cloud deployment guides
-- [ ] Docker containerization
-- [ ] VSCode extension
-- [ ] Jupyter notebook integration
-- [ ] Team collaboration features
-- [ ] Advanced memory system
-- [ ] Custom model fine-tuning
-
-## ⭐ Star History
-
-If you find this project helpful, please consider giving it a star!
-
----
-
-**Built with ❤️ for developers by developers**
-
-[Website](https://example.com) • [Documentation](https://docs.example.com) • [Blog](https://blog.example.com) • [Twitter](https://twitter.com/example)
-"# my-agent-pri" 
+[MIT](LICENSE)

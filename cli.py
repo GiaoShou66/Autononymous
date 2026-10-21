@@ -268,9 +268,12 @@ def _print_help() -> None:
         "  /typing on|off [cps]  Toggle the typewriter animation / set speed\n"
         "  /doctor               Check Ollama connectivity and model install\n"
         "  /export [path]        Export the conversation to a Markdown file\n"
+        "  /export-sft [path]    Export saved sessions as SFT training data (JSONL)\n"
         "  /agent <task>         Delegate a subtask to a fresh subagent\n"
         "  /loop [cycles=N] [every=S] <goal>  Run a goal autonomously until done\n"
-        "  @path                 Inline a file's contents into your message\n"
+        "  /refine [rounds=N] <prompt>  Answer, then critique and revise (default 1 round)\n"
+        "  /best [n=N] <prompt>  Sample N answers and keep the best (default 3, text only)\n"
+        "  @path                Inline a file's contents into your message\n"
         "  /upload <path> [question]  Upload a file (text/image/audio/video) into the chat\n"
         "  /paste [question]     Paste clipboard (text, or image/files with Pillow) into the chat\n"
         "  /modes                List available agent modes (claude-code, codex, etc.)\n"
@@ -788,6 +791,11 @@ def _ask_streaming(
             on_approval=on_approval,
             on_token=show_token,
         )
+    except KeyboardInterrupt:
+        partial = "".join(streamed)
+        agent.recover_from_interruption(partial)
+        console.print("\n[yellow]Interrupted.[/yellow]")
+        return partial or "(interrupted)"
     finally:
         thinking.stop()
 
@@ -890,12 +898,12 @@ def _save_history(history_file: Path) -> None:
 
 SLASH_COMMANDS = [
     "/agent", "/approve", "/attach", "/audio", "/auto-skills", "/autocorrect", "/autonomous",
-    "/changes", "/clear", "/clear-skills", "/commit", "/compact", "/continuous", "/cost",
-    "/data", "/delete", "/delete-session", "/diff", "/doctor", "/exit", "/export", "/forget",
+    "/best", "/changes", "/clear", "/clear-skills", "/commit", "/compact", "/continuous", "/cost",
+    "/data", "/delete", "/delete-session", "/diff", "/doctor", "/exit", "/export", "/export-sft", "/forget",
     "/git", "/go", "/grep", "/help", "/hooks", "/http", "/image", "/images", "/init",
     "/iterate", "/limits", "/lines", "/list", "/loop", "/mcp", "/media", "/memory", "/mkdir",
     "/mode", "/model", "/models", "/modes", "/new", "/outline", "/paste", "/patch", "/plan",
-    "/read", "/reasoning", "/reflect", "/remember", "/rename", "/resume", "/review",
+    "/read", "/reasoning", "/refine", "/reflect", "/remember", "/rename", "/resume", "/review",
     "/routing", "/save", "/search", "/sessions", "/skills", "/status", "/stream", "/syntax",
     "/task", "/tasks", "/test", "/todo", "/tokens", "/typing", "/undo", "/upload", "/use",
     "/video", "/videos", "/write",
@@ -1080,7 +1088,13 @@ def main(
     """
     Start an interactive REPL with the local AI agent.
     """
-    cfg_project_root = project_path.resolve() if project_path else None
+    # Default to this script's own directory, NOT the current working
+    # directory. cli.py is sometimes launched by double-clicking it directly
+    # (bypassing start_cli.bat, which does `cd` first) or from a shortcut
+    # whose working directory can be anywhere — even a protected folder like
+    # C:\Windows\System32, where the agent then fails trying to create
+    # .agent_sessions/.agent_memory.json there. See webui.py's identical fix.
+    cfg_project_root = project_path.resolve() if project_path else Path(__file__).resolve().parent
     cfg_skills_root = skills_path.resolve() if skills_path else None
     cfg = load_config(project_root=cfg_project_root, skills_root=cfg_skills_root)
 
@@ -2006,6 +2020,25 @@ def main(
                 console.print(f"[red]Export failed:[/red] {exc}")
             continue
 
+        if stripped == "/export-sft" or stripped.startswith("/export-sft "):
+            out_arg = stripped.split(maxsplit=1)[1].strip() if " " in stripped else "sft_dataset.jsonl"
+            out_path = cfg.project_root / out_arg
+            from sft_export import export_sft_dataset
+            from sessions import DEFAULT_SESSIONS_DIR
+            stats = export_sft_dataset(cfg.project_root / DEFAULT_SESSIONS_DIR, out_path)
+            if stats["sessions_exported"] == 0:
+                console.print(
+                    f"[yellow]Nothing to export[/yellow] ({stats['sessions_seen']} session(s) "
+                    "scanned, none had a clean user/assistant exchange)."
+                )
+            else:
+                console.print(
+                    f"[green]Exported {stats['pairs_exported']} exchange(s) from "
+                    f"{stats['sessions_exported']}/{stats['sessions_seen']} session(s)[/green] "
+                    f"to {out_path} (JSONL, one chat-SFT example per line; tool calls excluded)."
+                )
+            continue
+
         if stripped.startswith("/rename "):
             current_session_title = stripped.split(maxsplit=1)[1].strip()[:120]
             save_active_session()
@@ -2139,6 +2172,48 @@ def main(
                 console.print(f"[bold green]{summary}[/bold green]")
             except KeyboardInterrupt:
                 console.print("\n[yellow]Loop interrupted by user.[/yellow]")
+            continue
+
+        if stripped.split(maxsplit=1)[0] in {"/refine", "/best"}:
+            command, _, rest = stripped.partition(" ")
+            option = "rounds" if command == "/refine" else "n"
+            default_count = 1 if command == "/refine" else 3
+            count = default_count
+            rest = rest.strip()
+            if rest.startswith(f"{option}="):
+                head, _, rest = rest.partition(" ")
+                try:
+                    count = max(1, min(int(head.split("=", 1)[1]), 8))
+                except ValueError:
+                    console.print(f"[yellow]{option}= needs a whole number.[/yellow]")
+                    continue
+            if not rest.strip():
+                console.print(f"[yellow]Usage: {command} \\[{option}=N] <prompt>[/yellow]")
+                continue
+            label = "Refining" if command == "/refine" else f"Sampling {count} answers"
+            try:
+                with Spinner(label):
+                    if command == "/refine":
+                        reply = agent.ask_with_reflection(
+                            rest, rounds=count,
+                            on_tool_call=_on_tool_call, on_approval=_approval_prompt,
+                        )
+                    else:
+                        reply = agent.ask_best_of_n(rest, n=count)
+            except KeyboardInterrupt:
+                agent.recover_from_interruption("")
+                console.print("\n[yellow]Interrupted.[/yellow]")
+                continue
+            console.print("[bold magenta]Agent[/bold magenta]: ", end="")
+            console.print(reply, markup=False, highlight=False)
+            if command == "/refine":
+                if agent.last_critiques:
+                    console.print(f"[dim]Revised after {len(agent.last_critiques)} critique(s).[/dim]")
+                else:
+                    console.print("[dim]Reviewer approved the first draft.[/dim]")
+            else:
+                console.print(f"[dim]Picked the best of {len(agent.last_candidates)} candidates.[/dim]")
+            save_active_session()
             continue
 
         if stripped in {"/image", "/images"}:

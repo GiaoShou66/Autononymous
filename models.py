@@ -448,6 +448,55 @@ class _CommandCodeBackend(_ChatCompletionsBackend):
     label: str = "CommandCode backend"
 
 
+def _is_openrouter_model(model_name: str) -> bool:
+    """Return True if model_name starts with the 'openrouter:' prefix."""
+    return model_name.lower().startswith("openrouter:")
+
+
+@dataclass
+class _OpenRouterBackend(_ChatCompletionsBackend):
+    """
+    OpenRouter (openrouter.ai) — a chat/completions-compatible gateway in
+    front of hundreds of models. Confirmed live: GET /v1/models works with
+    no auth (470 models at last check); POST /v1/chat/completions returns
+    401 (not 404) without a key, so the route is correct.
+
+    Trigger with model_name "openrouter:<model-id>", e.g.
+    "openrouter:anthropic/claude-3.5-sonnet" or "openrouter:openai/gpt-4o".
+    List valid ids with GET https://openrouter.ai/api/v1/models (no auth).
+
+    Set OPENROUTER_API_KEY as an environment variable — never put a real
+    key in config.yaml, which is git-tracked.
+    """
+    base_url: str = "https://openrouter.ai/api/v1"
+    api_key: str = field(default_factory=lambda: os.getenv("OPENROUTER_API_KEY", ""))
+    label: str = "OpenRouter backend"
+
+
+def _is_deepseek_model(model_name: str) -> bool:
+    """Return True if model_name starts with the 'deepseek:' prefix."""
+    return model_name.lower().startswith("deepseek:")
+
+
+@dataclass
+class _DeepSeekBackend(_ChatCompletionsBackend):
+    """
+    DeepSeek's own API (api.deepseek.com) — direct access, not through a
+    gateway. Confirmed live: POST /v1/chat/completions returns 401 (not
+    404) without a key, so the route is correct. (GET /v1/models also
+    requires auth on this API, unlike OpenRouter's public one.)
+
+    Trigger with model_name "deepseek:<model-id>", e.g. "deepseek:deepseek-chat"
+    or "deepseek:deepseek-reasoner".
+
+    Set DEEPSEEK_API_KEY as an environment variable — never put a real key
+    in config.yaml, which is git-tracked.
+    """
+    base_url: str = "https://api.deepseek.com/v1"
+    api_key: str = field(default_factory=lambda: os.getenv("DEEPSEEK_API_KEY", ""))
+    label: str = "DeepSeek backend"
+
+
 @dataclass
 class _AnthropicBackend:
     """
@@ -671,6 +720,8 @@ class ModelClient:
       Ollama (local)        — default, model_name like "llama3:latest"
       Anthropic Claude      — model_name like "claude-3-5-sonnet-20241022"
       CommandCode AI        — model_name like "commandcode:deepseek/deepseek-v4-pro"
+      OpenRouter            — model_name like "openrouter:anthropic/claude-3.5-sonnet"
+      DeepSeek (direct)     — model_name like "deepseek:deepseek-chat"
       Custom endpoint       — set custom_model_url; routes any model_name there
 
     This client never calls any fixed third-party vendor API outside the
@@ -678,11 +729,13 @@ class ModelClient:
     chat/completions wire protocol that CommandCode AI and others also use.
 
     Environment variables:
-      ANTHROPIC_API_KEY  — for Anthropic Claude models
+      ANTHROPIC_API_KEY   — for Anthropic Claude models
       COMMANDCODE_API_KEY — for CommandCode AI models
-      CUSTOM_MODEL_KEY   — for the custom_model_url backend, if it needs auth
-      OLLAMA_BASE_URL    — override Ollama URL (default: http://localhost:11434)
-      OLLAMA_TIMEOUT     — override request timeout in seconds (default: 300)
+      OPENROUTER_API_KEY  — for OpenRouter models
+      DEEPSEEK_API_KEY    — for DeepSeek's own API (direct, not via a gateway)
+      CUSTOM_MODEL_KEY    — for the custom_model_url backend, if it needs auth
+      OLLAMA_BASE_URL     — override Ollama URL (default: http://localhost:11434)
+      OLLAMA_TIMEOUT      — override request timeout in seconds (default: 300)
     """
 
     model_name: str
@@ -778,6 +831,12 @@ class ModelClient:
         if _is_commandcode_model(selected_model):
             real_name = selected_model.split(":", 1)[1] if ":" in selected_model else selected_model
             return _CommandCodeBackend(model_name=real_name, timeout=self.timeout)
+        if _is_openrouter_model(selected_model):
+            real_name = selected_model.split(":", 1)[1] if ":" in selected_model else selected_model
+            return _OpenRouterBackend(model_name=real_name, timeout=self.timeout)
+        if _is_deepseek_model(selected_model):
+            real_name = selected_model.split(":", 1)[1] if ":" in selected_model else selected_model
+            return _DeepSeekBackend(model_name=real_name, timeout=self.timeout)
         if _is_anthropic_model(selected_model):
             return _AnthropicBackend(model_name=selected_model, base_url=ANTHROPIC_BASE_URL, timeout=self.timeout)
         return _OllamaBackend(
@@ -826,6 +885,23 @@ class ModelClient:
                         models.append(f"commandcode:{m_id}")
         except Exception:
             pass
+
+        try:
+            resp = requests.get("https://openrouter.ai/api/v1/models", timeout=4)
+            if resp.status_code == 200:
+                for item in resp.json().get("data", []):
+                    m_id = item.get("id")
+                    if m_id:
+                        models.append(f"openrouter:{m_id}")
+        except Exception:
+            pass
+
+        # DeepSeek's own /models endpoint requires a valid key even to list
+        # (confirmed: 401 with no auth at all), so it can't be browsed
+        # publicly like OpenRouter's or CommandCode's. These two are
+        # DeepSeek's documented, stable model ids.
+        models.append("deepseek:deepseek-chat")
+        models.append("deepseek:deepseek-reasoner")
 
         if self.model_name and self.model_name not in models:
             models.insert(0, self.model_name)

@@ -9,6 +9,28 @@ from typing import Any, Dict, List
 DEFAULT_SESSIONS_DIR = ".agent_sessions"
 
 
+def _repair_orphaned_tool_messages(history: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Drop any `role: "tool"` message that isn't immediately preceded by an
+    assistant message carrying the matching `tool_calls`. Such orphans can
+    end up in a saved session from history trimming/compaction that cut
+    between an assistant's tool_calls and its tool-result message (fixed at
+    the source in Agent._trim_history/.compact, but older saved sessions can
+    still have one). Most backends (Ollama) silently tolerate an orphaned
+    tool message; others (e.g. CommandCode's gateway) reject the whole
+    request with an opaque 400. Repairing on load means an old corrupted
+    session self-heals the moment it's resumed, instead of staying broken.
+    """
+    repaired: List[Dict[str, Any]] = []
+    for i, message in enumerate(history):
+        if message.get("role") == "tool":
+            prev = history[i - 1] if i > 0 else None
+            if not prev or prev.get("role") != "assistant" or "tool_calls" not in prev:
+                continue  # drop the orphan
+        repaired.append(message)
+    return repaired
+
+
 def _atomic_replace(temporary_path: Path, target_path: Path, retries: int = 5) -> None:
     """
     temporary_path.replace(target_path), retrying briefly on a transient
@@ -84,6 +106,8 @@ class SessionStore:
         data = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(data, dict):
             raise ValueError("Corrupt session file.")
+        if isinstance(data.get("history"), list):
+            data["history"] = _repair_orphaned_tool_messages(data["history"])
         return data
 
     def list_sessions(self) -> List[Dict[str, Any]]:

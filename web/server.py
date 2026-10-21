@@ -54,7 +54,12 @@ def initialize_agent():
         include_ignored_files=cfg.include_ignored_files,
     )
     
-    model_client = ModelClient(model_name=cfg.model_name)
+    model_client = ModelClient(
+        model_name=cfg.model_name,
+        routing_mode=cfg.routing_mode,
+        fast_model=cfg.fast_model,
+        reasoning_model=cfg.reasoning_model,
+    )
     skill_registry = SkillRegistry(cfg.skills_root) if cfg.skills_root else None
     
     memory_path = cfg.memory_path or (cfg.project_root / ".agent_memory.json")
@@ -529,11 +534,70 @@ def get_config():
     
     try:
         return jsonify({
-            'model': cfg.model_name,
+            'model': agent.model.model_name if agent else cfg.model_name,
             'mode': cfg.mode,
             'max_iterations': cfg.max_iterations,
             'max_context_turns': cfg.max_context_turns,
             'project_root': str(cfg.project_root),
+            'routing_mode': agent.model.routing_mode if agent else cfg.routing_mode,
+            'fast_model': agent.model.fast_model if agent else cfg.fast_model,
+            'reasoning_model': agent.model.reasoning_model if agent else cfg.reasoning_model,
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/clear', methods=['POST'])
+def clear_chat():
+    """
+    Reset the shared agent's conversation history. There is only one
+    global `agent` instance for the whole server process; the sidebar's
+    separate "conversations" are a frontend/localStorage concept only
+    and were never reflected server-side, so switching or creating a
+    conversation left old history (and anything the model had said
+    about itself) bleeding into the next one. Call this whenever the
+    frontend starts or switches to a conversation.
+    """
+    global agent
+
+    try:
+        dropped = agent.clear_history()
+        return jsonify({'success': True, 'dropped': dropped})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/routing', methods=['POST'])
+def set_routing():
+    """Switch between single-model and hybrid (fast/reasoning) routing."""
+    global agent
+
+    try:
+        data = request.json or {}
+        routing_mode = (data.get('routing_mode') or '').strip().lower()
+
+        if routing_mode not in ('single', 'hybrid'):
+            return jsonify({'error': 'routing_mode must be "single" or "hybrid"'}), 400
+
+        if routing_mode == 'single':
+            model_name = (data.get('model') or '').strip()
+            if not model_name:
+                return jsonify({'error': 'No model provided'}), 400
+            agent.model.routing_mode = 'single'
+            agent.model.model_name = model_name
+        else:
+            fast_model = (data.get('fast_model') or '').strip()
+            reasoning_model = (data.get('reasoning_model') or '').strip()
+            if not fast_model or not reasoning_model:
+                return jsonify({'error': 'hybrid mode needs both fast_model and reasoning_model'}), 400
+            agent.model.routing_mode = 'hybrid'
+            agent.model.fast_model = fast_model
+            agent.model.reasoning_model = reasoning_model
+
+        return jsonify({
+            'success': True,
+            'routing_mode': agent.model.routing_mode,
+            'model': agent.model.model_name,
+            'fast_model': agent.model.fast_model,
+            'reasoning_model': agent.model.reasoning_model,
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500

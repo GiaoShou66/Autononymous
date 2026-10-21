@@ -13,6 +13,11 @@ reasoning_model: "commandcode:deepseek/deepseek-v4-pro"
 # Put it in .env.local instead (COMMANDCODE_API_KEY=...), which is NOT
 # git-tracked (see .gitignore) and is loaded automatically on startup.
 commandcode_api_key: ""
+# ─── DeepSeek direct API key ────────────────────────────────────────────────
+# For model_name: "deepseek:deepseek-chat" or "deepseek:deepseek-reasoner".
+# Same rule: do NOT paste a real key here. Put it in .env.local instead
+# (DEEPSEEK_API_KEY=...).
+deepseek_api_key: ""
 # ─── Autonomous Agent Features ────────────────────────────────────────────────
 # Enable advanced autonomous capabilities
 enable_auto_continuation: true      # Auto-continue long generations
@@ -36,6 +41,8 @@ reasoning_enabled: true
 # No more OpenAI chat routing — "gpt-4o" etc. would silently fall through
 # to Ollama now. Use CommandCode AI instead for GPT-family access:
 # model_name: "commandcode:gpt-6-sol"  # see /v1/models for all ids (set COMMANDCODE_API_KEY)
+# model_name: "openrouter:anthropic/claude-3.5-sonnet"  # see openrouter.ai/models (set OPENROUTER_API_KEY)
+# model_name: "deepseek:deepseek-chat"  # or deepseek-reasoner (set DEEPSEEK_API_KEY)
 mode: "unrestricted"
 restrict_to_project: false
 skills_root: "./skills"

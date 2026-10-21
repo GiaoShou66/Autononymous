@@ -12,6 +12,9 @@ from media import analyze_media, analyze_image, analyze_video, transcribe_audio,
 from mcp_client import MCPClientManager
 from memory import AgentMemory
 from hooks import HookManager
+from verify import check_file
+from reasoning import reflect, best_of_n
+from retrieval import CodeIndex
 from data_analysis import analyze_dataset
 
 
@@ -36,6 +39,38 @@ Access to tools:
 8. fetch_url: Access the internet by fetching HTTP/HTTPS URLs.
 9. search_web: Search the internet for real-time information.
 9b. http_request: Call any REST API with method, headers, params, and JSON/text body.
+
+Asking the user to choose between options:
+When you need the user to pick from a small set of choices rather than type
+free text (e.g. "which approach?", "proceed or not?"), end your reply with a
+fenced ```ask block containing the question on the first line and each
+option as a "- " bullet on its own line, for example:
+
+```ask
+Which backend should the new endpoint use?
+- PostgreSQL
+- SQLite
+- In-memory only
+```
+
+The web panel renders this as clickable buttons; clicking one sends that
+option's exact text back to you as the user's next message.
+
+When more than one option can apply at once (e.g. "which of these should I
+enable?"), use ```ask-multi instead, same shape:
+
+```ask-multi
+Which checks should run before committing?
+- Lint
+- Type check
+- Unit tests
+- Integration tests
+```
+
+The panel renders checkboxes plus a Submit button; the user's next message
+comes back as the chosen options joined with ", ". Use plain prose questions
+for anything else — reserve these formats for real choice-based decisions,
+not every clarifying question.
 """
 
 
@@ -385,6 +420,29 @@ TOOL_SCHEMAS = [
                     "max_results": {
                         "type": "integer",
                         "description": "Optional maximum number of results to return (default 5).",
+                    },
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_codebase",
+            "description": (
+                "Search this project's own files by meaning, not just grep text. "
+                "Ranks directories first, then files within them, and returns each "
+                "hit with a one-line summary (docstring, headings, or top-level "
+                "symbols with line numbers). Use this to find where something is "
+                "implemented when you don't know the exact file or symbol name."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "What you're looking for, in plain words.",
                     },
                 },
                 "required": ["query"],
@@ -804,6 +862,20 @@ class Agent:
     tasks: List[Dict[str, Any]] = field(default_factory=list)
     plan_mode: bool = False
     require_approval: bool = False
+    # Compiler-in-the-loop: syntax-check files right after the agent writes
+    # them and feed any error back as part of the tool result.
+    compiler_in_loop: bool = True
+    # Filled by ask_with_reflection() / ask_best_of_n() for the UI to show.
+    last_critiques: List[str] = field(default_factory=list)
+    last_candidates: List[str] = field(default_factory=list)
+    # Context alignment: before each model call, inject a short block of the
+    # project files most relevant to the latest user message, so replies
+    # stay grounded in what the code actually does instead of drifting on
+    # long conversations. Built from the same hierarchical index
+    # search_codebase uses. 0 disables.
+    context_alignment: bool = True
+    context_alignment_files: int = 4
+    _code_index: Optional[Any] = field(default=None, repr=False)
     # Rough token accounting (estimated as chars/4; no tokenizer shipped).
     total_tokens_in: int = 0
     total_tokens_out: int = 0
@@ -836,6 +908,90 @@ class Agent:
         self.history.append({"role": "assistant", "content": content})
         self._trim_history()
 
+    def recover_from_interruption(self, partial_text: str) -> None:
+        """
+        Call after ask() is interrupted mid-turn (e.g. Ctrl-C) to keep
+        history well-formed for the next request. add_user_message() runs
+        before the model call, so an interruption always leaves that user
+        message in history; this fills in whatever is missing after it:
+
+        - If the last entry is an assistant message with pending
+          tool_calls (interrupted after the model decided to call tools
+          but before any/all of their results came back), synthesize a
+          tool-result stub for each call id. An assistant tool_calls
+          message with no matching tool result is just as invalid to most
+          chat-completions APIs as the orphaned tool-result messages
+          _repair_orphaned_tool_messages() cleans up on session load — the
+          same failure mode from the other direction.
+        - Otherwise, record whatever text streamed before the
+          interruption as the assistant's reply, same as a normal turn.
+        """
+        last = self.history[-1] if self.history else None
+        if last and last.get("role") == "assistant" and last.get("tool_calls"):
+            for tc in last["tool_calls"]:
+                tool_message = {
+                    "role": "tool",
+                    "content": "(interrupted by user before this tool call ran)",
+                }
+                if tc.get("id"):
+                    tool_message["tool_call_id"] = tc["id"]
+                self.history.append(tool_message)
+            self._trim_history()
+            return
+        if partial_text:
+            self.add_assistant_message(partial_text)
+
+    def ask_with_reflection(self, prompt: str, rounds: int = 1, **ask_kwargs: Any) -> str:
+        """Normal ask(), then critique-and-revise the final text reply.
+
+        The revised answer replaces the draft in history so later turns build
+        on the better version. Critiques land in self.last_critiques (empty
+        means the first review approved the draft unchanged).
+        """
+        reply = self.ask(prompt, **ask_kwargs)
+        self.last_critiques = []
+        last = self.history[-1] if self.history else None
+        # Skip placeholders and hook-blocked replies: only reflect on what
+        # actually went into history as the assistant's answer.
+        if not (last and last.get("role") == "assistant" and last.get("content") == reply):
+            return reply
+        revised, critiques = reflect(self.model, prompt, reply, rounds)
+        self.last_critiques = critiques
+        if revised != reply:
+            last["content"] = revised
+        return revised
+
+    def ask_best_of_n(self, prompt: str, n: int = 3) -> str:
+        """Inference-time compute: sample n answers and keep the best one.
+
+        Pure text reasoning - candidates are sampled without tools, so use
+        plain ask() when the task needs to read or change project files.
+        """
+        self._maybe_compact()
+        self.add_user_message(prompt)
+        outbound = self._messages_for_model(self._select_skills(prompt))
+        best, candidates, _ = best_of_n(self.model, outbound, n)
+        self.last_candidates = candidates
+        best = best or "(No response from model)"
+        self.add_assistant_message(best)
+        return best
+
+    @staticmethod
+    def _safe_tail_start(messages: List[Message], start: int) -> int:
+        """
+        Adjust a candidate "keep messages[start:]" boundary so it never opens
+        on an orphaned `role: "tool"` message. A tool-result message is only
+        valid immediately after the assistant message whose tool_calls it
+        answers; cutting between them produces a payload some backends
+        (Ollama) tolerate but others (e.g. CommandCode's gateway) reject
+        outright with an opaque 400. Walk the boundary backward until it
+        either lands on a non-tool message or reaches the start.
+        """
+        start = max(0, min(start, len(messages)))
+        while start > 0 and start < len(messages) and messages[start].get("role") == "tool":
+            start -= 1
+        return start
+
     def _trim_history(self) -> None:
         """
         Keep at most `max_context_turns` user+assistant exchanges in history,
@@ -848,7 +1004,8 @@ class Agent:
             return
         max_messages = self.max_context_turns * 2
         if len(rest) > max_messages:
-            rest = rest[-max_messages:]
+            start = self._safe_tail_start(rest, len(rest) - max_messages)
+            rest = rest[start:]
         self.history = system + rest
 
     # Context-window compression into persistent memory
@@ -895,8 +1052,9 @@ class Agent:
         if len(rest) <= keep_recent:
             return "History is already small; nothing to compact."
 
-        old = rest[:-keep_recent]
-        recent = rest[-keep_recent:]
+        recent_start = self._safe_tail_start(rest, len(rest) - keep_recent)
+        old = rest[:recent_start]
+        recent = rest[recent_start:]
         new_summary = self._summarize_messages(old, self.memory.rolling_summary)
         self.memory.set_summary(new_summary)
         self.history = system + recent
@@ -1200,6 +1358,35 @@ class Agent:
             )
         return "\n\n".join(sections)
 
+    def _get_code_index(self) -> CodeIndex:
+        if self._code_index is None:
+            self._code_index = CodeIndex(self.tools.project_root)
+        return self._code_index
+
+    def _build_context_alignment_block(self) -> str:
+        """Grounding block: the project files most relevant to the latest
+        user message, inserted fresh into each outbound request (never into
+        persisted history) so long tool-calling turns stay anchored to real
+        code instead of drifting on stale earlier context."""
+        if not self.context_alignment or self.context_alignment_files <= 0:
+            return ""
+        last_user = next(
+            (m.get("content") for m in reversed(self.history) if m.get("role") == "user"),
+            None,
+        )
+        if not last_user or not isinstance(last_user, str):
+            return ""
+        try:
+            hits = self._get_code_index().search(last_user, top_files=self.context_alignment_files)
+        except Exception:
+            return ""
+        if not hits:
+            return ""
+        return (
+            "Relevant project context for the latest message (grounding only; "
+            "verify with real tools before relying on it):\n" + CodeIndex.render(hits)
+        )
+
     def _messages_for_model(self, selected_skills: List[Skill]) -> List[Message]:
         messages = [dict(message) for message in self.history]
         if not messages:
@@ -1208,6 +1395,18 @@ class Agent:
             "role": "system",
             "content": self._build_system_prompt(selected_skills),
         }
+        context_block = self._build_context_alignment_block()
+        if context_block:
+            # Appended at the end, not inserted after the system message:
+            # it needs to sit next to the latest user message it's actually
+            # about, right before the model generates, not buried at the
+            # start of a long conversation. role="user", not "system" - a
+            # second system message mid-conversation is rejected or
+            # reordered by some providers (the same message-shape
+            # strictness behind the orphaned-tool-call fix earlier this
+            # session); a plain user-role aside is accepted everywhere and
+            # is how retrieval context is normally injected.
+            messages.append({"role": "user", "content": context_block})
         return messages
 
     def _extract_text_tool_call(self, content: str) -> tuple[str, dict] | None:
@@ -1305,6 +1504,7 @@ class Agent:
                 return f"Blocked by PreToolUse hook: {pre.message}"
 
         result = self._execute_tool_inner(name, arguments)
+        result = self._append_compile_check(name, arguments, result)
 
         # PostToolUse hooks see the result; exit code 2 sends feedback to the model.
         if self.hooks and self.hooks.has("PostToolUse"):
@@ -1316,6 +1516,25 @@ class Agent:
             if post.blocked:
                 result = f"{result}\n\n[PostToolUse hook feedback] {post.message}"
         return result
+
+    def _append_compile_check(self, name: str, arguments: dict, result: str) -> str:
+        """Compiler-in-the-loop: after a successful write/patch, syntax-check
+        the file and tell the model about any error so its next step fixes it."""
+        if not self.compiler_in_loop or name not in {"write_file", "apply_patch"}:
+            return result
+        if not result.startswith("Successfully"):
+            return result
+        try:
+            target = self.tools._resolve_path(arguments["path"])
+        except Exception:
+            return result
+        error = check_file(target)
+        if error is None:
+            return result
+        return (
+            f"{result}\n\n[Compiler check FAILED for {arguments['path']}]\n{error}\n"
+            "Fix this before continuing."
+        )
 
     def _execute_tool_inner(self, name: str, arguments: dict) -> str:
         """Execute a tool call and return the result as a string."""
@@ -1427,6 +1646,13 @@ class Agent:
                     arguments["query"],
                     max_results=int(arguments.get("max_results") or 5),
                 )
+
+            elif name == "search_codebase":
+                index = self._get_code_index()
+                hits = index.search(arguments["query"])
+                if not hits:
+                    return "No matching files found."
+                return index.render(hits)
 
             elif name == "http_request":
                 return http_request(

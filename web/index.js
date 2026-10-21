@@ -4,8 +4,8 @@ const state = {
     currentConversation: null,
     messages: [],
     isStreaming: false,
+    currentAbortController: null,
     settings: {
-        apiKey: '',
         model: 'claude-3-5-sonnet',
         autonomous: true,
     },
@@ -32,8 +32,10 @@ const elements = {
     messages: document.getElementById('messages'),
     messageInput: document.getElementById('messageInput'),
     sendButton: document.getElementById('sendButton'),
+    stopButton: document.getElementById('stopButton'),
     addButton: document.getElementById('addButton'),
-    attachFile: document.getElementById('attachFile'),
+    clearChatBtn: document.getElementById('clearChatBtn'),
+    themeToggle: document.getElementById('themeToggle'),
     attachmentBar: document.getElementById('attachmentBar'),
     voiceInput: document.getElementById('voiceInput'),
     imageInput: document.getElementById('imageInput'),
@@ -44,7 +46,7 @@ const elements = {
     deleteSelectedBtn: document.getElementById('deleteSelectedBtn'),
     selectedCount: document.getElementById('selectedCount'),
     modeSelect: document.getElementById('modeSelect'),
-    settingsButton: document.getElementById('settings'),
+    settingsButton: document.getElementById('settingsBtn'),
     settingsModal: document.getElementById('settingsModal'),
     closeModal: document.getElementById('closeModal'),
     saveSettings: document.getElementById('saveSettings'),
@@ -54,6 +56,7 @@ const elements = {
 
 // Initialize
 function init() {
+    applySavedTheme();
     loadSettings();
     loadConversations();
     // Create an initial conversation only if none were loaded from storage.
@@ -111,6 +114,7 @@ function attachEventListeners() {
     elements.closeModal.addEventListener('click', closeSettings);
     elements.cancelSettings.addEventListener('click', closeSettings);
     elements.saveSettings.addEventListener('click', saveSettings);
+    document.getElementById('routingModeSelect').addEventListener('change', updateRoutingGroupVisibility);
 
     // Mode selection
     elements.modeSelect.addEventListener('change', (e) => {
@@ -119,9 +123,45 @@ function attachEventListeners() {
 
     // Input buttons
     elements.addButton.addEventListener('click', showAddMenu);
-    elements.attachFile.addEventListener('click', uploadFile);
     elements.voiceInput.addEventListener('click', startVoiceInput);
     elements.imageInput.addEventListener('click', uploadImage);
+    elements.stopButton.addEventListener('click', stopGeneration);
+
+    // Header actions
+    elements.clearChatBtn.addEventListener('click', clearCurrentChat);
+    elements.themeToggle.addEventListener('click', toggleTheme);
+}
+
+function clearCurrentChat() {
+    if (state.messages.length === 0) return;
+    if (!confirm('清空当前对话？')) return;
+
+    state.messages = [];
+    saveCurrentConversation();
+    showEmptyState();
+    clearServerHistory();
+}
+
+function toggleTheme() {
+    const current = document.body.dataset.theme === 'light' ? 'light' : 'dark';
+    const next = current === 'dark' ? 'light' : 'dark';
+    document.body.dataset.theme = next;
+    localStorage.setItem('theme', next);
+
+    const icon = elements.themeToggle.querySelector('i');
+    if (icon) icon.className = next === 'dark' ? 'fas fa-moon' : 'fas fa-sun';
+}
+
+function applySavedTheme() {
+    const saved = localStorage.getItem('theme');
+    if (saved === 'light' || saved === 'dark') {
+        document.body.dataset.theme = saved;
+    }
+    const icon = elements.themeToggle && elements.themeToggle.querySelector('i');
+    if (icon) {
+        const current = document.body.dataset.theme === 'light' ? 'light' : 'dark';
+        icon.className = current === 'dark' ? 'fas fa-moon' : 'fas fa-sun';
+    }
 }
 
 function toggleSidebar() {
@@ -143,6 +183,17 @@ function createNewChat() {
     saveConversations();
     renderConversations();
     showEmptyState();
+    clearServerHistory();
+}
+
+// There's only one agent instance on the server, shared by every
+// "conversation" the sidebar shows — switching or starting a new one
+// must reset its history, or old context (and anything the model said
+// about itself) bleeds into the next conversation.
+function clearServerHistory() {
+    fetch('/api/clear', { method: 'POST' }).catch(err => {
+        console.error('Failed to clear server-side conversation history:', err);
+    });
 }
 
 function sendMessage() {
@@ -253,7 +304,65 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
+// Parses a ```ask / ```ask-multi block body: first non-blank line is the
+// question, each "- " line after it is one option.
+function parseQuestionBlock(body) {
+    const lines = body.split('\n').map(l => l.trim()).filter(Boolean);
+    if (lines.length === 0) return null;
+    const [question, ...rest] = lines;
+    const options = rest
+        .filter(l => l.startsWith('- '))
+        .map(l => l.slice(2).trim())
+        .filter(Boolean);
+    return { question, options };
+}
+
 function formatContent(content) {
+    // ```ask blocks (see agent.py's SYSTEM_PROMPT) render as clickable
+    // option buttons instead of a code block — single choice, sent
+    // immediately on click.
+    content = content.replace(/```ask\n([\s\S]+?)```/g, (_match, body) => {
+        const parsed = parseQuestionBlock(body);
+        if (!parsed) return '';
+        const { question, options } = parsed;
+        if (options.length === 0) return escapeHtml(question);
+
+        return `
+            <div class="question-options">
+                <div class="question-options-prompt">${escapeHtml(question)}</div>
+                <div class="question-options-list">
+                    ${options.map(opt => `
+                        <button type="button" class="question-option-btn" onclick="selectQuestionOption(this)">${escapeHtml(opt)}</button>
+                    `).join('')}
+                </div>
+            </div>
+        `;
+    });
+
+    // ```ask-multi blocks render as checkboxes plus a Submit button —
+    // multiple choice, sent as the checked options joined with ", ".
+    content = content.replace(/```ask-multi\n([\s\S]+?)```/g, (_match, body) => {
+        const parsed = parseQuestionBlock(body);
+        if (!parsed) return '';
+        const { question, options } = parsed;
+        if (options.length === 0) return escapeHtml(question);
+
+        return `
+            <div class="question-options">
+                <div class="question-options-prompt">${escapeHtml(question)}</div>
+                <div class="question-options-list question-options-list-multi">
+                    ${options.map((opt, i) => `
+                        <label class="question-option-checkbox">
+                            <input type="checkbox" value="${escapeHtml(opt)}" id="qopt-${i}-${Date.now()}">
+                            <span>${escapeHtml(opt)}</span>
+                        </label>
+                    `).join('')}
+                </div>
+                <button type="button" class="question-options-submit" onclick="submitQuestionMulti(this)">Submit</button>
+            </div>
+        `;
+    });
+
     // Basic markdown-like formatting
     content = content
         .replace(/```(\w+)?\n([\s\S]+?)```/g, '<pre><code class="language-$1">$2</code></pre>')
@@ -263,6 +372,30 @@ function formatContent(content) {
         .replace(/\n/g, '<br>');
 
     return content;
+}
+
+function selectQuestionOption(button) {
+    const list = button.closest('.question-options-list');
+    if (list) {
+        list.querySelectorAll('.question-option-btn').forEach(btn => { btn.disabled = true; });
+        button.classList.add('selected');
+    }
+    elements.messageInput.value = button.textContent;
+    sendMessage();
+}
+
+function submitQuestionMulti(button) {
+    const container = button.closest('.question-options');
+    if (!container) return;
+    const checked = Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.value);
+    if (checked.length === 0) {
+        alert('选择至少一项。');
+        return;
+    }
+    container.querySelectorAll('input[type="checkbox"]').forEach(cb => { cb.disabled = true; });
+    button.disabled = true;
+    elements.messageInput.value = checked.join(', ');
+    sendMessage();
 }
 
 function formatTime(timestamp) {
@@ -277,9 +410,18 @@ function formatTime(timestamp) {
     return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
 }
 
+function stopGeneration() {
+    if (state.currentAbortController) {
+        state.currentAbortController.abort();
+    }
+}
+
 async function sendToAPI(message) {
     state.isStreaming = true;
+    state.currentAbortController = new AbortController();
     elements.sendButton.disabled = true;
+    elements.sendButton.style.display = 'none';
+    elements.stopButton.style.display = 'flex';
 
     // Show typing indicator
     const typingEl = document.createElement('div');
@@ -308,26 +450,47 @@ async function sendToAPI(message) {
             await sendToAPIStreaming(message, typingEl);
         }
     } catch (error) {
-        console.error('Error calling API:', error);
-        typingEl.remove();
-        addMessage('assistant', `抱歉，发生了错误: ${error.message}\n\n请检查你的设置或稍后重试。`);
+        if (error.name === 'AbortError') {
+            // User-initiated stop, already handled where the abort happened.
+        } else {
+            console.error('Error calling API:', error);
+            typingEl.remove();
+            addMessage('assistant', `抱歉，发生了错误: ${error.message}\n\n请检查你的设置或稍后重试。`);
+        }
     } finally {
         state.isStreaming = false;
+        state.currentAbortController = null;
         elements.sendButton.disabled = false;
+        elements.sendButton.style.display = '';
+        elements.stopButton.style.display = 'none';
     }
 }
 
 async function sendToAPIAutonomous(message, typingEl) {
-    const response = await fetch('/api/autonomous/continuous', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-            task: message,
-            mode: state.mode,
-        }),
-    });
+    let response;
+    try {
+        response = await fetch('/api/autonomous/continuous', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                task: message,
+                mode: state.mode,
+            }),
+            signal: state.currentAbortController.signal,
+        });
+    } catch (err) {
+        if (err.name === 'AbortError') {
+            // Autonomous mode has no streaming/partial output to keep —
+            // the whole request is one synchronous call, so stopping it
+            // just cancels it outright.
+            typingEl.remove();
+            addMessage('assistant', '(已停止)');
+            return;
+        }
+        throw err;
+    }
 
     if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
@@ -353,6 +516,7 @@ async function sendToAPIStreaming(message, typingEl) {
             message,
             mode: state.mode,
         }),
+        signal: state.currentAbortController.signal,
     });
 
     if (!response.ok) {
@@ -424,8 +588,13 @@ async function sendToAPIStreaming(message, typingEl) {
             }
         }
     } catch (streamError) {
-        console.error('Streaming error:', streamError);
-        throw streamError;
+        if (streamError.name === 'AbortError') {
+            // User stopped generation mid-stream — keep whatever text
+            // already arrived instead of discarding it as an error.
+        } else {
+            console.error('Streaming error:', streamError);
+            throw streamError;
+        }
     }
 
     // Save the message
@@ -618,6 +787,7 @@ function loadConversation(id) {
 
     state.currentConversation = id;
     state.messages = conv.messages || [];
+    clearServerHistory();
 
     elements.chatTitle.textContent = conv.title;
     elements.messages.innerHTML = '';
@@ -650,61 +820,93 @@ function deleteConversation(id) {
     renderConversations();
 }
 
-function openSettings() {
-    elements.settingsModal.classList.add('active');
-
-    // Load current settings
-    document.getElementById('apiKeyInput').value = state.settings.apiKey || '';
-    populateModelSelect(state.settings.model);
-    document.getElementById('autonomousCheckbox').checked = state.settings.autonomous !== false;
+// Mirrors models.py's backend-detection rules (_is_commandcode_model /
+// _is_openrouter_model / _is_deepseek_model / _is_anthropic_model):
+// anything else is routed to the local Ollama backend.
+function isCloudModel(m) {
+    const lower = m.toLowerCase();
+    return lower.startsWith('commandcode:')
+        || lower.startsWith('openrouter:')
+        || lower.startsWith('deepseek:')
+        || lower.startsWith('claude');
 }
 
-async function populateModelSelect(preferredValue) {
-    const select = document.getElementById('modelSelect');
-    select.innerHTML = '<option value="">正在加载模型列表...</option>';
-    select.disabled = true;
+function modelOptionsHtml(models) {
+    const localModels = models.filter(m => !isCloudModel(m));
+    const cloudModels = models.filter(isCloudModel);
+    let html = '';
+    if (localModels.length > 0) {
+        html += `<optgroup label="本地模型 (Ollama)">${
+            localModels.map(m => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`).join('')
+        }</optgroup>`;
+    }
+    if (cloudModels.length > 0) {
+        html += `<optgroup label="云端模型">${
+            cloudModels.map(m => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`).join('')
+        }</optgroup>`;
+    }
+    return html;
+}
+
+function updateRoutingGroupVisibility() {
+    const mode = document.getElementById('routingModeSelect').value;
+    document.getElementById('singleModelGroup').style.display = mode === 'hybrid' ? 'none' : '';
+    document.getElementById('hybridModelGroup').style.display = mode === 'hybrid' ? '' : 'none';
+}
+
+async function openSettings() {
+    elements.settingsModal.classList.add('active');
+
+    document.getElementById('autonomousCheckbox').checked = state.settings.autonomous !== false;
+
+    const modelSelect = document.getElementById('modelSelect');
+    const fastSelect = document.getElementById('fastModelSelect');
+    const reasoningSelect = document.getElementById('reasoningModelSelect');
+    const routingSelect = document.getElementById('routingModeSelect');
+
+    [modelSelect, fastSelect, reasoningSelect].forEach(s => {
+        s.innerHTML = '<option value="">正在加载模型列表...</option>';
+        s.disabled = true;
+    });
 
     try {
-        const response = await fetch('/api/models');
-        if (!response.ok) throw new Error(`status ${response.status}`);
-        const data = await response.json();
-        const models = data.models || [];
-        const current = (preferredValue && models.includes(preferredValue))
-            ? preferredValue
-            : (data.current || '');
+        const [modelsRes, configRes] = await Promise.all([
+            fetch('/api/models'),
+            fetch('/api/config'),
+        ]);
+        if (!modelsRes.ok) throw new Error(`status ${modelsRes.status}`);
+        const modelsData = await modelsRes.json();
+        const config = configRes.ok ? await configRes.json() : {};
+        const models = modelsData.models || [];
 
         if (models.length === 0) {
-            select.innerHTML = '<option value="">没有可用模型</option>';
+            [modelSelect, fastSelect, reasoningSelect].forEach(s => {
+                s.innerHTML = '<option value="">没有可用模型</option>';
+            });
             return;
         }
 
-        // Mirrors models.py's backend-detection rules (_is_commandcode_model /
-        // _is_anthropic_model): anything else is routed to the local Ollama backend.
-        const isCloud = (m) => {
-            const lower = m.toLowerCase();
-            return lower.startsWith('commandcode:') || lower.startsWith('claude');
-        };
-        const localModels = models.filter(m => !isCloud(m));
-        const cloudModels = models.filter(isCloud);
+        const html = modelOptionsHtml(models);
+        modelSelect.innerHTML = html;
+        fastSelect.innerHTML = html;
+        reasoningSelect.innerHTML = html;
 
-        let html = '';
-        if (localModels.length > 0) {
-            html += `<optgroup label="本地模型 (Ollama)">${
-                localModels.map(m => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`).join('')
-            }</optgroup>`;
-        }
-        if (cloudModels.length > 0) {
-            html += `<optgroup label="云端模型">${
-                cloudModels.map(m => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`).join('')
-            }</optgroup>`;
-        }
-        select.innerHTML = html;
-        if (current) select.value = current;
+        const currentModel = (state.settings.model && models.includes(state.settings.model))
+            ? state.settings.model
+            : (config.model || modelsData.current || '');
+        if (currentModel) modelSelect.value = currentModel;
+        if (config.fast_model) fastSelect.value = config.fast_model;
+        if (config.reasoning_model) reasoningSelect.value = config.reasoning_model;
+
+        routingSelect.value = config.routing_mode === 'hybrid' ? 'hybrid' : 'single';
+        updateRoutingGroupVisibility();
     } catch (error) {
         console.error('Failed to load models:', error);
-        select.innerHTML = '<option value="">模型列表加载失败</option>';
+        [modelSelect, fastSelect, reasoningSelect].forEach(s => {
+            s.innerHTML = '<option value="">模型列表加载失败</option>';
+        });
     } finally {
-        select.disabled = false;
+        [modelSelect, fastSelect, reasoningSelect].forEach(s => { s.disabled = false; });
     }
 }
 
@@ -713,32 +915,34 @@ function closeSettings() {
 }
 
 async function saveSettings() {
+    const routingMode = document.getElementById('routingModeSelect').value;
     const newModel = document.getElementById('modelSelect').value;
-    const previousModel = state.settings.model;
+    const fastModel = document.getElementById('fastModelSelect').value;
+    const reasoningModel = document.getElementById('reasoningModelSelect').value;
 
     state.settings = {
-        apiKey: document.getElementById('apiKeyInput').value,
         model: newModel,
         autonomous: document.getElementById('autonomousCheckbox').checked,
     };
-
     localStorage.setItem('settings', JSON.stringify(state.settings));
 
-    if (newModel && newModel !== previousModel) {
-        try {
-            const response = await fetch('/api/model', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ model: newModel }),
-            });
-            if (!response.ok) {
-                const errorData = await response.json().catch(() => ({}));
-                throw new Error(errorData.error || `status ${response.status}`);
-            }
-        } catch (error) {
-            console.error('Failed to switch model:', error);
-            alert(`切换模型失败: ${error.message}`);
+    try {
+        const body = routingMode === 'hybrid'
+            ? { routing_mode: 'hybrid', fast_model: fastModel, reasoning_model: reasoningModel }
+            : { routing_mode: 'single', model: newModel };
+
+        const response = await fetch('/api/routing', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.error || `status ${response.status}`);
         }
+    } catch (error) {
+        console.error('Failed to update routing:', error);
+        alert(`更新路由设置失败: ${error.message}`);
     }
 
     closeSettings();

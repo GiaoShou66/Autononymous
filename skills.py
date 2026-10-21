@@ -139,30 +139,102 @@ class SkillRegistry:
 
     The registry is model-agnostic: it only discovers, scores, and safely reads
     skill resources. The agent decides when to inject the selected skills.
+
+    New skills are hot-reloaded automatically: each call to ``get`` or ``match``
+    checks for new or changed SKILL.md files on disk and reloads if needed.
+
+    Scans exactly one root directory â the ``skills_root`` passed by the caller.
     """
 
     def __init__(self, skills_root: Path | str | None) -> None:
-        self.skills_root = Path(skills_root).expanduser().resolve() if skills_root else None
         self._skills: dict[str, Skill] = {}
-        if self.skills_root and self.skills_root.exists():
-            self._skills = self._load_skills(self.skills_root)
+        self._skill_mtimes: dict[Path, float] = {}
+        self._roots: list[Path] = []
+
+        if skills_root is not None:
+            root = Path(skills_root).expanduser()
+            if root.is_dir():
+                self._roots.append(root)
+
+        if self._roots:
+            self._load_skills()
+
+    @property
+    def skills_root(self) -> Path | None:
+        """Primary skills root (first one found, for backward compat)."""
+        return self._roots[0] if self._roots else None
+
+    @property
+    def roots(self) -> list[Path]:
+        """All active skill roots."""
+        return list(self._roots)
+
+    def reload(self) -> bool:
+        """Rescan the skill root for new or changed SKILL.md files.
+
+        Returns True if the registry was updated.
+        """
+        return self._load_skills()
+
+    def _skill_files(self) -> dict[Path, float]:
+        """Return a mapping of SKILL.md paths to their current mtimes.
+
+        Only scans the single root directory passed to ``__init__``.
+        """
+        files: dict[Path, float] = {}
+        for root in self._roots:
+            if not root.is_dir():
+                continue
+            for path in sorted(root.rglob("SKILL.md")):
+                try:
+                    resolved = path.resolve()
+                    if resolved not in files:
+                        files[resolved] = path.stat().st_mtime
+                except OSError:
+                    continue
+        return files
+
+    def _load_skills(self) -> bool:
+        """Load or reload all skills. Returns True if the set changed."""
+        current_files = self._skill_files()
+        if current_files == self._skill_mtimes:
+            return False
+
+        skills: dict[str, Skill] = {}
+        for skill_file in current_files:
+            skill = self._parse_skill(skill_file)
+            if skill.name:
+                key = skill.name.lower()
+                # First root wins on name collisions (earlier roots have
+                # higher priority).
+                if key not in skills:
+                    skills[key] = skill
+
+        self._skills = skills
+        self._skill_mtimes = current_files
+        return True
 
     def __bool__(self) -> bool:
+        self.reload()
         return bool(self._skills)
 
     def __len__(self) -> int:
+        self.reload()
         return len(self._skills)
 
     def all(self) -> List[Skill]:
+        self.reload()
         return sorted(self._skills.values(), key=lambda skill: skill.name)
 
     def get(self, name: str) -> Skill | None:
+        self.reload()
         return self._skills.get(name.strip().lower())
 
     def names(self) -> List[str]:
         return [skill.name for skill in self.all()]
 
     def match(self, query: str, limit: int = 3) -> List[Skill]:
+        self.reload()
         query_text = query.lower()
         query_tokens = _tokens(query_text)
         if not query_tokens and not query_text.strip():
@@ -232,14 +304,6 @@ class SkillRegistry:
         body_tokens = _tokens(skill.instructions[:2000])
         score += min(4, len(query_tokens & body_tokens))
         return score
-
-    def _load_skills(self, skills_root: Path) -> dict[str, Skill]:
-        skills: dict[str, Skill] = {}
-        for skill_file in sorted(skills_root.rglob("SKILL.md")):
-            skill = self._parse_skill(skill_file)
-            if skill.name:
-                skills[skill.name.lower()] = skill
-        return skills
 
     def _parse_skill(self, skill_file: Path) -> Skill:
         text = skill_file.read_text(encoding="utf-8")

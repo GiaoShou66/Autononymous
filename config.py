@@ -31,7 +31,7 @@ DEFAULT_LOOP_INTERVAL_SECONDS = 0.0
 DEFAULT_REASONING_ENABLED = True
 DEFAULT_ROUTING_MODE = "single"
 DEFAULT_CONFIG_FILE = "config.yaml"
-DEFAULT_SKILLS_ROOT = Path(__file__).parent.resolve() / "skills-main" / "skills"
+DEFAULT_SKILLS_ROOT = Path(__file__).parent.resolve() / "skills"
 
 
 @dataclass
@@ -60,6 +60,7 @@ class Config:
     fast_model: str = ""
     reasoning_model: str = ""
     commandcode_api_key: str = ""
+    deepseek_api_key: str = ""
     custom_model_url: str = ""
     custom_model_key: str = ""
 
@@ -300,7 +301,10 @@ def load_config(
             or yaml_cfg.get("skills_root")
         )
         if skills_root_str:
-            skills_root = Path(skills_root_str).expanduser().resolve()
+            skills_root = Path(skills_root_str).expanduser()
+            if not skills_root.is_absolute():
+                skills_root = project_root / skills_root
+            skills_root = skills_root.resolve()
         elif DEFAULT_SKILLS_ROOT.exists():
             skills_root = DEFAULT_SKILLS_ROOT
         else:
@@ -312,6 +316,13 @@ def load_config(
     )
     if commandcode_api_key:
         os.environ["COMMANDCODE_API_KEY"] = commandcode_api_key
+
+    deepseek_api_key = (
+        os.environ.get("DEEPSEEK_API_KEY", "").strip()
+        or str(yaml_cfg.get("deepseek_api_key") or "").strip()
+    )
+    if deepseek_api_key:
+        os.environ["DEEPSEEK_API_KEY"] = deepseek_api_key
 
     custom_model_url = (
         os.environ.get("CUSTOM_MODEL_URL", "").strip()
@@ -352,6 +363,7 @@ def load_config(
         fast_model=fast_model,
         reasoning_model=reasoning_model,
         commandcode_api_key=commandcode_api_key,
+        deepseek_api_key=deepseek_api_key,
         custom_model_url=custom_model_url,
         custom_model_key=custom_model_key,
     )
