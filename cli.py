@@ -16,6 +16,13 @@ except ImportError:
     readline = None
 
 try:
+    import termios  # Unix only; used for the arrow-key interactive question picker
+    import tty
+except ImportError:
+    termios = None
+    tty = None
+
+try:
     from pygments import lex
     from pygments.lexers import get_lexer_for_filename, TextLexer
     from pygments.token import Token
@@ -746,6 +753,222 @@ def _approval_prompt(action: str, detail: str) -> bool:
     return answer == "y"
 
 
+def _read_key() -> str:
+    """Read one keypress from stdin in raw mode, decoding arrow-key escapes."""
+    import select
+
+    fd = sys.stdin.fileno()
+    old = termios.tcgetattr(fd)
+    try:
+        tty.setraw(fd)
+        ch = sys.stdin.read(1)
+        if ch == "\x1b":
+            # Lone Esc, or the start of an arrow-key escape sequence (\x1b[A etc).
+            if select.select([sys.stdin], [], [], 0.05)[0]:
+                ch2 = sys.stdin.read(1)
+                if ch2 == "[" and select.select([sys.stdin], [], [], 0.05)[0]:
+                    code = sys.stdin.read(1)
+                    return {"A": "up", "B": "down", "C": "right", "D": "left"}.get(code, "")
+            return "esc"
+        if ch in ("\r", "\n"):
+            return "enter"
+        if ch == " ":
+            return "space"
+        if ch == "\x03":
+            raise KeyboardInterrupt
+        if ch == "k":
+            return "up"
+        if ch == "j":
+            return "down"
+        if ch == "\t":
+            return "down"
+        return ch
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+
+def _render_question_frame(
+    header_trail: list[str],
+    question: str,
+    options: list[dict],
+    multi_select: bool,
+    cursor: int,
+    selected: set[int],
+    other_index: int,
+) -> str:
+    lines = []
+    if header_trail:
+        crumbs = [
+            f"[bold cyan]{escape(h)}[/bold cyan]" if i == len(header_trail) - 1 else f"[dim]{escape(h)}[/dim]"
+            for i, h in enumerate(header_trail)
+        ]
+        lines.append(" › ".join(crumbs))
+        lines.append("")
+    lines.append(f"[bold]{escape(question)}[/bold]")
+    lines.append("")
+
+    total = other_index + 1
+    for i in range(total):
+        is_cursor = i == cursor
+        pointer = "[bold cyan]›[/bold cyan]" if is_cursor else " "
+        if i == other_index:
+            label_fmt = "[bold cyan]Type something...[/bold cyan]" if is_cursor else "[dim]Type something...[/dim]"
+            lines.append(f"{pointer} {i + 1}. {label_fmt}")
+            continue
+        opt = options[i]
+        box = ""
+        if multi_select:
+            box = "[bold green]●[/bold green] " if i in selected else "[dim]○[/dim] "
+        label = escape(opt.get("label", ""))
+        if is_cursor:
+            label_fmt = f"[bold cyan]{label}[/bold cyan]"
+        elif not multi_select and i in selected:
+            label_fmt = f"[bold green]{label}[/bold green] [green]✓[/green]"
+        else:
+            label_fmt = label
+        lines.append(f"{pointer} {i + 1}. {box}{label_fmt}")
+        desc = opt.get("description")
+        if desc:
+            lines.append(f"      [dim]{escape(desc)}[/dim]")
+
+    lines.append("")
+    hint = "Space to toggle · Enter to confirm" if multi_select else "Enter to select"
+    lines.append(f"[dim]{hint} · ↑/↓ or j/k to move · number to jump · Esc to skip[/dim]")
+    return "\n".join(lines)
+
+
+def _fallback_pick(
+    header_trail: list[str], question: str, options: list[dict], multi_select: bool
+) -> Optional[list[str]]:
+    """Plain numbered-prompt picker used when raw terminal mode isn't available
+    (no tty, piped stdin, or non-Unix)."""
+    if header_trail:
+        console.print(" › ".join(f"[dim]{escape(h)}[/dim]" for h in header_trail))
+    console.print(f"[bold]{escape(question)}[/bold]")
+    for i, opt in enumerate(options, 1):
+        console.print(f"  {i}. {escape(opt.get('label', ''))}")
+        if opt.get("description"):
+            console.print(f"     [dim]{escape(opt['description'])}[/dim]")
+    other_num = len(options) + 1
+    console.print(f"  {other_num}. Type something...")
+    label = "Pick option number(s), comma-separated (blank to skip)" if multi_select else "Pick option number (blank to skip)"
+    raw = Prompt.ask(label, default="").strip()
+    if not raw:
+        return None
+
+    def resolve(token: str) -> Optional[str]:
+        token = token.strip()
+        if not token:
+            return None
+        if token.isdigit():
+            idx = int(token)
+            if idx == other_num:
+                free = Prompt.ask("Your answer").strip()
+                return free or None
+            if 1 <= idx <= len(options):
+                return options[idx - 1]["label"]
+            return None
+        return token  # treat free text itself as the answer
+
+    if multi_select:
+        picks = [p for p in (resolve(t) for t in raw.split(",")) if p]
+        return picks or None
+    picked = resolve(raw)
+    return [picked] if picked else None
+
+
+def _interactive_pick(
+    header_trail: list[str], question: str, options: list[dict], multi_select: bool
+) -> Optional[list[str]]:
+    """
+    Claude-Code-style interactive picker for one question: arrow keys (or
+    j/k) move the cursor, Space toggles a choice on multi-select questions,
+    Enter confirms, Esc skips. Returns the chosen label(s), or None if
+    skipped/cancelled. Falls back to a plain numbered prompt when stdin
+    isn't an interactive TTY.
+    """
+    if termios is None or tty is None or not sys.stdin.isatty():
+        return _fallback_pick(header_trail, question, options, multi_select)
+
+    other_index = len(options)
+    cursor = 0
+    selected: set[int] = set()
+    prev_lines = 0
+    try:
+        while True:
+            frame = _render_question_frame(
+                header_trail, question, options, multi_select, cursor, selected, other_index
+            )
+            if prev_lines:
+                sys.stdout.write(f"\x1b[{prev_lines}A\x1b[J")
+            with console.capture() as cap:
+                console.print(frame, highlight=False)
+            rendered = cap.get()
+            sys.stdout.write(rendered)
+            sys.stdout.flush()
+            prev_lines = rendered.count("\n")
+
+            total = other_index + 1
+            key = _read_key()
+            if key == "up":
+                cursor = (cursor - 1) % total
+            elif key == "down":
+                cursor = (cursor + 1) % total
+            elif key.isdigit() and key != "0":
+                idx = int(key) - 1
+                if 0 <= idx < total:
+                    cursor = idx
+            elif key == "space" and multi_select and cursor != other_index:
+                selected.symmetric_difference_update({cursor})
+            elif key == "enter":
+                if cursor == other_index:
+                    free = Prompt.ask("Your answer").strip()
+                    return [free] if free else None
+                if multi_select:
+                    picks = selected or {cursor}
+                    return [options[i]["label"] for i in sorted(picks)]
+                return [options[cursor]["label"]]
+            elif key == "esc":
+                return None
+    except KeyboardInterrupt:
+        return None
+
+
+def _ask_user_question_ui(questions: list) -> str:
+    """
+    Tool callback for ask_user_question: renders each question as an
+    interactive picker (single- or multi-select) and returns a plain-text
+    transcript of the user's answers for the model to read as the tool result.
+    """
+    if not questions:
+        return "No questions provided."
+
+    headers = [q.get("header") or (q.get("question", "")[:12] or f"Q{i + 1}") for i, q in enumerate(questions)]
+    console.print()
+    answers = []
+    for i, q in enumerate(questions):
+        options = q.get("options") or []
+        if not options:
+            continue
+        trail = [f"{h} ✓" if j < i else h for j, h in enumerate(headers)]
+        picks = _interactive_pick(trail, q.get("question", ""), options, bool(q.get("multi_select")))
+        if picks is None:
+            console.print("[yellow]→ skipped[/yellow]\n")
+            answers.append((q.get("question", ""), None))
+        else:
+            console.print(f"[green]✓[/green] {', '.join(picks)}\n")
+            answers.append((q.get("question", ""), picks))
+
+    if not answers:
+        return "No questions had options; nothing was asked."
+
+    parts = []
+    for question_text, picks in answers:
+        answer_text = ", ".join(picks) if picks else "(skipped — no preference given)"
+        parts.append(f"Q: {question_text}\nA: {answer_text}")
+    return "\n\n".join(parts)
+
+
 def _ask_streaming(
     agent: Agent,
     prompt: str,
@@ -753,6 +976,7 @@ def _ask_streaming(
     *,
     on_tool_call=None,
     on_approval=None,
+    on_ask_question=None,
     thinking_label: str = "Thinking",
     header: str = "Agent",
 ) -> str:
@@ -784,12 +1008,19 @@ def _ask_streaming(
         if on_tool_call:
             on_tool_call(name, args, result)
 
+    def wrapped_ask_question(questions: list) -> str:
+        thinking.stop()
+        if on_ask_question:
+            return on_ask_question(questions)
+        return "ask_user_question is unavailable here."
+
     try:
         reply = agent.ask(
             prompt,
             on_tool_call=wrapped_tool_call,
             on_approval=on_approval,
             on_token=show_token,
+            on_ask_question=wrapped_ask_question,
         )
     except KeyboardInterrupt:
         partial = "".join(streamed)
@@ -858,7 +1089,7 @@ def _print_banner(cfg, agent: Agent, skill_registry, agent_memory, custom_comman
         Panel(
             grid,
             title="[bold green]AI Agent[/bold green]",
-            subtitle="[dim]/help for commands · Tab completes /commands · /exit to quit[/dim]",
+            subtitle="[dim]Type / to see commands · Tab completes · /exit to quit[/dim]",
             border_style="green",
             expand=False,
             padding=(1, 2),
@@ -887,6 +1118,12 @@ def _setup_readline(history_file: Path, commands: list[str]) -> None:
     readline.set_completer(completer)
     readline.set_completer_delims(" \t\n")
     readline.parse_and_bind("tab: complete")
+    try:
+        # Show every matching command on the first Tab instead of requiring
+        # a second press, so typing "/" + Tab immediately lists candidates.
+        readline.parse_and_bind("set show-all-if-ambiguous on")
+    except Exception:
+        pass
 
 
 def _save_history(history_file: Path) -> None:
@@ -908,6 +1145,109 @@ SLASH_COMMANDS = [
     "/task", "/tasks", "/test", "/todo", "/tokens", "/typing", "/undo", "/upload", "/use",
     "/video", "/videos", "/write",
 ]
+
+# Short description per built-in command, used by the "/" command palette and
+# by "did you mean" suggestions when a typed command doesn't match anything.
+SLASH_COMMAND_HELP = {
+    "/agent": "Delegate a subtask to a fresh subagent",
+    "/approve": "Approve each file change before it applies",
+    "/attach": "Upload a file into the chat",
+    "/audio": "Transcribe and analyze audio",
+    "/auto-skills": "Enable or disable automatic skill matching",
+    "/autocorrect": "Auto-correct code errors",
+    "/autonomous": "Full autonomous mode with task decomposition",
+    "/best": "Sample N answers and keep the best",
+    "/changes": "Show all file changes made this session",
+    "/clear": "Reset conversation context",
+    "/clear-skills": "Clear manually loaded skills",
+    "/commit": "Stage all and commit",
+    "/compact": "Compress old turns into persistent memory",
+    "/continuous": "Continuous coding with auto-continuation",
+    "/cost": "Show estimated token usage this session",
+    "/data": "Profile CSV/TSV/JSON data and optionally chart it",
+    "/delete": "Delete a file from the project",
+    "/delete-session": "Delete a saved conversation",
+    "/diff": "Show git diff for project or file",
+    "/doctor": "Check Ollama connectivity and model install",
+    "/exit": "Exit the agent",
+    "/export": "Export the conversation to a Markdown file",
+    "/export-sft": "Export saved sessions as SFT training data",
+    "/forget": "Clear all memory, or forget lesson number n",
+    "/git": "Run git status, commit, log, branch",
+    "/go": "Pick a session to switch into",
+    "/grep": "Search codebase for regex/text with line numbers",
+    "/help": "Show the command list",
+    "/hooks": "Show lifecycle hooks from .agent/settings.json",
+    "/http": "Fetch a URL and show the text response",
+    "/image": "Analyze a picture with the vision model",
+    "/images": "Analyze a picture with the vision model",
+    "/init": "Scan project and generate a CLAUDE.md",
+    "/iterate": "Iterative generation with self-improvement",
+    "/limits": "Show current capacity settings",
+    "/lines": "Read specific lines with line numbers",
+    "/list": "List files in the project",
+    "/loop": "Run a goal autonomously until done",
+    "/mcp": "Show configured MCP servers and discovered tools",
+    "/media": "Auto-detect media type and analyze",
+    "/memory": "Show persistent memory",
+    "/mkdir": "Create a directory in the project",
+    "/mode": "Switch agent mode",
+    "/model": "Show or switch the active model",
+    "/models": "List models exposed by the current provider",
+    "/modes": "List available agent modes",
+    "/new": "Start a fresh conversation",
+    "/outline": "Show classes, functions, and symbols in file",
+    "/paste": "Paste clipboard into the chat",
+    "/patch": "Apply a patch to a file",
+    "/plan": "Plan mode: agent plans, makes no changes",
+    "/read": "Read a file's contents",
+    "/reasoning": "Toggle native local-model reasoning",
+    "/refine": "Answer, then critique and revise",
+    "/reflect": "Extract lessons from this session into memory",
+    "/remember": "Save a durable lesson to persistent memory",
+    "/rename": "Rename the current conversation",
+    "/resume": "Resume a saved session",
+    "/review": "Review the current git diff",
+    "/routing": "Show fast/reasoning model routing",
+    "/save": "Save this conversation as a session",
+    "/search": "Search the web",
+    "/sessions": "List saved sessions",
+    "/skills": "List skills, or search for matching skills",
+    "/status": "Show session status dashboard",
+    "/stream": "Long-context streaming generation",
+    "/syntax": "Validate Python/JSON/YAML syntax",
+    "/task": "Manage tasks (add, done, clear)",
+    "/tasks": "Show the agent's task list",
+    "/test": "Run test suite",
+    "/todo": "Show the agent's task list",
+    "/tokens": "Show estimated token usage this session",
+    "/typing": "Toggle the typewriter animation / set speed",
+    "/undo": "Revert last file modification from .bak",
+    "/upload": "Upload a file into the chat",
+    "/use": "Keep a skill loaded for future requests",
+    "/video": "Analyze a video (key frames + audio transcript)",
+    "/videos": "Analyze a video (key frames + audio transcript)",
+    "/write": "Write content to a file",
+}
+
+
+def _print_command_palette(custom_commands: dict) -> None:
+    """Show every available /command with a short description (triggered by typing bare '/')."""
+    table = Table(title="Commands (type to filter, e.g. /sess)")
+    table.add_column("Command", style="bold cyan", no_wrap=True)
+    table.add_column("Description")
+    for cmd in SLASH_COMMANDS:
+        table.add_row(cmd, SLASH_COMMAND_HELP.get(cmd, ""))
+    for name in sorted(custom_commands):
+        table.add_row(f"/{name}", "[dim]custom command[/dim]")
+    console.print(table)
+    console.print("[dim]Press Tab after / to autocomplete, or just keep typing.[/dim]")
+
+
+def _suggest_commands(cmd_name: str, custom_commands: dict, limit: int = 3) -> list[str]:
+    """Fuzzy-match an unrecognized /command against known commands for a 'did you mean' hint."""
+    candidates = [c[1:] for c in SLASH_COMMANDS] + list(custom_commands)
+    return [f"/{c}" for c in difflib.get_close_matches(cmd_name, candidates, n=limit, cutoff=0.5)]
 
 
 def _print_skills(registry: SkillRegistry, query: str | None = None) -> None:
@@ -1037,7 +1377,8 @@ def main(
         "--model",
         "-m",
         help="Model name (e.g. llama3.1:8b, commandcode:deepseek/deepseek-v4-pro, "
-        "claude-3-5-sonnet-20241022; or any name if custom_model_url is set).",
+        "claude-3-5-sonnet-20241022, lmarena:claude-3-5-sonnet-20241022; "
+        "or any name if custom_model_url is set).",
     ),
     max_turns: Optional[int] = typer.Option(
         None,
@@ -1277,6 +1618,10 @@ def main(
 
         stripped = user_input.strip().lstrip("\ufeff")
         if not stripped:
+            continue
+
+        if stripped == "/":
+            _print_command_palette(custom_commands)
             continue
 
         if stripped in {"/exit", ":q"}:
@@ -2090,6 +2435,7 @@ def main(
                 _ask_streaming(
                     agent, prompt, ui_state,
                     on_tool_call=_on_tool_call, on_approval=_approval_prompt,
+                    on_ask_question=_ask_user_question_ui,
                 )
                 save_active_session()
             else:
@@ -2114,6 +2460,7 @@ def main(
                 _ask_streaming(
                     agent, prompt, ui_state,
                     on_tool_call=_on_tool_call, on_approval=_approval_prompt,
+                    on_ask_question=_ask_user_question_ui,
                 )
                 save_active_session()
             else:
@@ -2197,6 +2544,7 @@ def main(
                         reply = agent.ask_with_reflection(
                             rest, rounds=count,
                             on_tool_call=_on_tool_call, on_approval=_approval_prompt,
+                    on_ask_question=_ask_user_question_ui,
                         )
                     else:
                         reply = agent.ask_best_of_n(rest, n=count)
@@ -2314,7 +2662,15 @@ def main(
                 message_to_send = template.replace("$ARGUMENTS", cmd_args)
                 console.print(f"[dim]Running custom command /{cmd_name}...[/dim]")
             else:
-                console.print(f"[yellow]Unknown command: {stripped.split()[0]}. Try /help.[/yellow]")
+                typed = stripped.split()[0]
+                suggestions = _suggest_commands(cmd_name, custom_commands)
+                if suggestions:
+                    console.print(
+                        f"[yellow]Unknown command: {typed}.[/yellow] "
+                        f"Did you mean [bold cyan]{' or '.join(suggestions)}[/bold cyan]?"
+                    )
+                else:
+                    console.print(f"[yellow]Unknown command: {typed}. Try /help.[/yellow]")
                 continue
         else:
             # Expand @file mentions into inline file contents.
@@ -2398,6 +2754,7 @@ def main(
             ui_state,
             on_tool_call=_on_tool_call,
             on_approval=_approval_prompt,
+            on_ask_question=_ask_user_question_ui,
             thinking_label=f"Thinking in {agent.mode} mode{flag_str}",
         )
         save_active_session()

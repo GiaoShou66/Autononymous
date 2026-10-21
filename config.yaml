@@ -18,6 +18,18 @@ commandcode_api_key: ""
 # Same rule: do NOT paste a real key here. Put it in .env.local instead
 # (DEEPSEEK_API_KEY=...).
 deepseek_api_key: ""
+# ─── lmarena2api (self-hosted) ──────────────────────────────────────────────
+# Connects to a locally-run https://github.com/deanxv/lmarena2api instance,
+# an OpenAI-compatible proxy in front of LMArena's chat models. For
+# model_name: "lmarena:<model-id>" — see that project's README for which
+# model ids it currently supports (e.g. "lmarena:claude-3-5-sonnet-20241022").
+# lmarena_base_url defaults to http://localhost:10088/v1 (lmarena2api's
+# default port) if left blank — only set it if you run the server elsewhere.
+# lmarena_api_key is the API_SECRET you passed when starting the lmarena2api
+# container. Same rule: do NOT paste a real key here. Put both in
+# .env.local instead (LMARENA_BASE_URL=..., LMARENA_API_KEY=...).
+lmarena_base_url: ""
+lmarena_api_key: ""
 # ─── Autonomous Agent Features ────────────────────────────────────────────────
 # Enable advanced autonomous capabilities
 enable_auto_continuation: true      # Auto-continue long generations
@@ -43,6 +55,7 @@ reasoning_enabled: true
 # model_name: "commandcode:gpt-6-sol"  # see /v1/models for all ids (set COMMANDCODE_API_KEY)
 # model_name: "openrouter:anthropic/claude-3.5-sonnet"  # see openrouter.ai/models (set OPENROUTER_API_KEY)
 # model_name: "deepseek:deepseek-chat"  # or deepseek-reasoner (set DEEPSEEK_API_KEY)
+# model_name: "lmarena:claude-3-5-sonnet-20241022"  # via a local lmarena2api instance (set LMARENA_API_KEY)
 mode: "unrestricted"
 restrict_to_project: false
 skills_root: "./skills"

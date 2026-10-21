@@ -61,6 +61,8 @@ class Config:
     reasoning_model: str = ""
     commandcode_api_key: str = ""
     deepseek_api_key: str = ""
+    lmarena_base_url: str = ""
+    lmarena_api_key: str = ""
     custom_model_url: str = ""
     custom_model_key: str = ""
 
@@ -324,6 +326,20 @@ def load_config(
     if deepseek_api_key:
         os.environ["DEEPSEEK_API_KEY"] = deepseek_api_key
 
+    lmarena_base_url = (
+        os.environ.get("LMARENA_BASE_URL", "").strip()
+        or str(yaml_cfg.get("lmarena_base_url") or "").strip()
+    )
+    if lmarena_base_url:
+        os.environ["LMARENA_BASE_URL"] = lmarena_base_url
+
+    lmarena_api_key = (
+        os.environ.get("LMARENA_API_KEY", "").strip()
+        or str(yaml_cfg.get("lmarena_api_key") or "").strip()
+    )
+    if lmarena_api_key:
+        os.environ["LMARENA_API_KEY"] = lmarena_api_key
+
     custom_model_url = (
         os.environ.get("CUSTOM_MODEL_URL", "").strip()
         or str(yaml_cfg.get("custom_model_url") or "").strip()
@@ -364,6 +380,8 @@ def load_config(
         reasoning_model=reasoning_model,
         commandcode_api_key=commandcode_api_key,
         deepseek_api_key=deepseek_api_key,
+        lmarena_base_url=lmarena_base_url,
+        lmarena_api_key=lmarena_api_key,
         custom_model_url=custom_model_url,
         custom_model_key=custom_model_key,
     )

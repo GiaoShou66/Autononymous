@@ -875,6 +875,70 @@ TOOL_SCHEMAS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "ask_user_question",
+            "description": (
+                "Ask the user one or more multiple-choice questions when you're blocked on a "
+                "decision only they can make — not for things you could reasonably infer or "
+                "decide yourself. Renders an interactive picker (arrow keys to move, Enter to "
+                "select) instead of free text, so prefer this over asking in plain prose "
+                "whenever the answer is really a choice among a few options. Each question can "
+                "be single-select or multi-select. Returns the user's picks as text."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "questions": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 4,
+                        "description": "1-4 questions to ask, shown one after another.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "question": {
+                                    "type": "string",
+                                    "description": "The full question text.",
+                                },
+                                "header": {
+                                    "type": "string",
+                                    "description": "Very short label (<=12 chars) shown as a breadcrumb/tag.",
+                                },
+                                "multi_select": {
+                                    "type": "boolean",
+                                    "description": "True to let the user pick more than one option.",
+                                },
+                                "options": {
+                                    "type": "array",
+                                    "minItems": 2,
+                                    "maxItems": 6,
+                                    "description": "2-6 distinct, mutually exclusive choices (unless multi_select).",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "label": {
+                                                "type": "string",
+                                                "description": "Short (1-6 word) display text for the choice.",
+                                            },
+                                            "description": {
+                                                "type": "string",
+                                                "description": "Optional one-line explanation of this choice.",
+                                            },
+                                        },
+                                        "required": ["label"],
+                                    },
+                                },
+                            },
+                            "required": ["question", "options"],
+                        },
+                    },
+                },
+                "required": ["questions"],
+            },
+        },
+    },
 ]
 
 
@@ -928,6 +992,9 @@ class Agent:
     # Internal recursion guard for spawned subagents.
     depth: int = 0
     _approval_cb: Optional[Callable[[str, str], bool]] = field(default=None, repr=False)
+    # Set per-ask() call; renders the ask_user_question tool as an interactive
+    # picker. None (e.g. inside a subagent) makes the tool a graceful no-op.
+    _ask_question_cb: Optional[Callable[[List[Dict[str, Any]]], str]] = field(default=None, repr=False)
 
     # Tools that change files or system state (gated by plan mode / approval).
     MUTATING_TOOLS = {
@@ -1844,6 +1911,18 @@ class Agent:
                 mode = arguments.get("mode")
                 return self.spawn_subagent(task, mode=mode)
 
+            elif name == "ask_user_question":
+                questions = arguments.get("questions") or []
+                if not questions:
+                    return "No questions provided."
+                if self._ask_question_cb is None:
+                    return (
+                        "ask_user_question is unavailable in this context (no interactive "
+                        "terminal, e.g. inside a subagent). Make a reasonable assumption, "
+                        "state it, and continue."
+                    )
+                return self._ask_question_cb(questions)
+
             else:
                 return f"Unknown tool: {name}"
         except Exception as exc:
@@ -1856,6 +1935,7 @@ class Agent:
         on_tool_call: Optional[Callable[[str, dict, str], None]] = None,
         on_approval: Optional[Callable[[str, str], bool]] = None,
         on_token: Optional[Callable[[str], None]] = None,
+        on_ask_question: Optional[Callable[[List[Dict[str, Any]]], str]] = None,
     ) -> str:
         """
         Send a user message and let the agent autonomously call tools
@@ -1865,6 +1945,7 @@ class Agent:
         tool execution so the CLI can display progress.
         """
         self._approval_cb = on_approval
+        self._ask_question_cb = on_ask_question
 
         # UserPromptSubmit hooks can block a prompt or add context to it.
         if self.hooks and self.hooks.has("UserPromptSubmit"):

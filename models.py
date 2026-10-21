@@ -540,6 +540,39 @@ class _DeepSeekBackend(_ChatCompletionsBackend):
     label: str = "DeepSeek backend"
 
 
+def _is_lmarena_model(model_name: str) -> bool:
+    """Return True if model_name starts with the 'lmarena:' prefix."""
+    return model_name.lower().startswith("lmarena:")
+
+
+@dataclass
+class _LMArenaBackend(_ChatCompletionsBackend):
+    """
+    lmarena2api (https://github.com/deanxv/lmarena2api) — a self-hosted,
+    OpenAI-compatible proxy in front of the chat models exposed on
+    lmarena.ai (Claude, GPT, Gemini, Grok, etc. — whatever LMArena
+    currently lists). Unlike the other backends above this is not a fixed
+    third-party vendor API: you run the lmarena2api server yourself, so
+    base_url is configurable rather than hardcoded to a public domain.
+
+    Trigger with model_name "lmarena:<model-id>", e.g.
+    "lmarena:claude-3-5-sonnet-20241022" or "lmarena:chatgpt-4o-latest" —
+    use whatever model id lmarena2api's README currently lists as
+    supported for that server instance.
+
+    Set LMARENA_BASE_URL to your running instance's API root (default:
+    http://localhost:10088/v1, lmarena2api's default port) and
+    LMARENA_API_KEY to the API_SECRET you set when starting the
+    lmarena2api container — never put a real key in config.yaml, which is
+    git-tracked.
+    """
+    base_url: str = field(
+        default_factory=lambda: os.getenv("LMARENA_BASE_URL", "http://localhost:10088/v1")
+    )
+    api_key: str = field(default_factory=lambda: os.getenv("LMARENA_API_KEY", ""))
+    label: str = "lmarena2api backend"
+
+
 @dataclass
 class _AnthropicBackend:
     """
@@ -765,17 +798,21 @@ class ModelClient:
       CommandCode AI        — model_name like "commandcode:deepseek/deepseek-v4-pro"
       OpenRouter            — model_name like "openrouter:anthropic/claude-3.5-sonnet"
       DeepSeek (direct)     — model_name like "deepseek:deepseek-chat"
+      lmarena2api (self-hosted) — model_name like "lmarena:claude-3-5-sonnet-20241022"
       Custom endpoint       — set custom_model_url; routes any model_name there
 
     This client never calls any fixed third-party vendor API outside the
-    backends listed above. Custom endpoints merely speak the same widely-used
-    chat/completions wire protocol that CommandCode AI and others also use.
+    backends listed above. Custom endpoints (and lmarena2api, which you run
+    yourself) merely speak the same widely-used chat/completions wire
+    protocol that CommandCode AI and others also use.
 
     Environment variables:
       ANTHROPIC_API_KEY   — for Anthropic Claude models
       COMMANDCODE_API_KEY — for CommandCode AI models
       OPENROUTER_API_KEY  — for OpenRouter models
       DEEPSEEK_API_KEY    — for DeepSeek's own API (direct, not via a gateway)
+      LMARENA_BASE_URL    — your lmarena2api instance (default: http://localhost:10088/v1)
+      LMARENA_API_KEY     — the API_SECRET configured on that lmarena2api instance
       CUSTOM_MODEL_KEY    — for the custom_model_url backend, if it needs auth
       OLLAMA_BASE_URL     — override Ollama URL (default: http://localhost:11434)
       OLLAMA_TIMEOUT      — override request timeout in seconds (default: 300)
@@ -880,6 +917,9 @@ class ModelClient:
         if _is_deepseek_model(selected_model):
             real_name = selected_model.split(":", 1)[1] if ":" in selected_model else selected_model
             return _DeepSeekBackend(model_name=real_name, timeout=self.timeout)
+        if _is_lmarena_model(selected_model):
+            real_name = selected_model.split(":", 1)[1] if ":" in selected_model else selected_model
+            return _LMArenaBackend(model_name=real_name, timeout=self.timeout)
         if _is_anthropic_model(selected_model):
             return _AnthropicBackend(model_name=selected_model, base_url=ANTHROPIC_BASE_URL, timeout=self.timeout)
         return _OllamaBackend(
