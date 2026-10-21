@@ -1,0 +1,22 @@
+# Secrets — never commit real API keys
+.env
+.env.local
+.env.*.local
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Local agent state (memory, saved sessions, REPL history, file backups)
+.agent_memory.json
+.agent_sessions/
+.agent_repl_history
+*.bak
+
+# OS / editor noise
+.DS_Store
+.vscode/
+.idea/
