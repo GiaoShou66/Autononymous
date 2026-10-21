@@ -126,10 +126,11 @@ Set `model_name` in `config.yaml`:
 > **lmarena2api** is a server you run yourself (see its README for the
 > Docker command and the `LA_COOKIE`/`CF_CLEARANCE` values it needs from
 > lmarena.ai) — this agent just talks to it as an OpenAI-compatible
-> endpoint. It defaults to `http://localhost:10088/v1`; set
-> `lmarena_base_url` in `config.yaml` (or `LMARENA_BASE_URL`) if you run it
-> on a different host/port, and use whichever model id its README
-> currently lists as supported.
+> endpoint. It defaults to `http://localhost:10088/v1`; that default lives
+> in `models.py` (`_LMArenaBackend`) — set the `LMARENA_BASE_URL`
+> environment variable (or `.env.local`) if you run it on a different
+> host/port, and use whichever model id its README currently lists as
+> supported.
 
 **Hybrid routing**: set `routing_mode: hybrid` plus `fast_model` and
 `reasoning_model` in `config.yaml` to automatically route short/simple

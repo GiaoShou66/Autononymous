@@ -23,12 +23,14 @@ deepseek_api_key: ""
 # an OpenAI-compatible proxy in front of LMArena's chat models. For
 # model_name: "lmarena:<model-id>" — see that project's README for which
 # model ids it currently supports (e.g. "lmarena:claude-3-5-sonnet-20241022").
-# lmarena_base_url defaults to http://localhost:10088/v1 (lmarena2api's
-# default port) if left blank — only set it if you run the server elsewhere.
 # lmarena_api_key is the API_SECRET you passed when starting the lmarena2api
-# container. Same rule: do NOT paste a real key here. Put both in
-# .env.local instead (LMARENA_BASE_URL=..., LMARENA_API_KEY=...).
-lmarena_base_url: ""
+# container. Same rule: do NOT paste a real key here. Put it in .env.local
+# instead (LMARENA_API_KEY=...).
+#
+# The base URL isn't a config.yaml setting — it's resolved in models.py
+# (_LMArenaBackend), defaulting to http://localhost:10088/v1 (lmarena2api's
+# default port). Only set LMARENA_BASE_URL as an environment variable (or
+# in .env.local) if you run the server elsewhere.
 lmarena_api_key: ""
 # ─── Autonomous Agent Features ────────────────────────────────────────────────
 # Enable advanced autonomous capabilities
