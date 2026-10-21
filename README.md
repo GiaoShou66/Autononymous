@@ -4,8 +4,9 @@
 
 A local, unrestricted AI coding agent with two interfaces — a terminal CLI and a
 browser-based web panel — backed by your choice of model (local Ollama,
-Anthropic Claude, DeepSeek, OpenRouter, or the multi-provider CommandCode AI
-gateway). Beyond plain chat it does compiler-checked writes, draft/critique/
+Anthropic Claude, DeepSeek, OpenRouter, a self-hosted lmarena2api instance, or
+the multi-provider CommandCode AI gateway). Beyond plain chat it does
+compiler-checked writes, draft/critique/
 revise reflection, best-of-N sampling, and whole-repo hierarchical retrieval —
 see [Code-quality & reasoning features](#code-quality--reasoning-features).
 
@@ -115,11 +116,20 @@ Set `model_name` in `config.yaml`:
 | CommandCode AI (gateway to DeepSeek, Kimi, GPT, GLM, Qwen, Gemini, Grok, Mistral, ...) | `commandcode:deepseek/deepseek-v4-pro` | `COMMANDCODE_API_KEY` |
 | DeepSeek (direct) | `deepseek:deepseek-chat` or `deepseek:deepseek-reasoner` | `DEEPSEEK_API_KEY` |
 | OpenRouter (470+ models) | `openrouter:anthropic/claude-3.5-sonnet` | `OPENROUTER_API_KEY` |
+| [lmarena2api](https://github.com/deanxv/lmarena2api) (self-hosted, LMArena models) | `lmarena:claude-3-5-sonnet-20241022` | `LMARENA_API_KEY` |
 | Custom OpenAI-compatible endpoint | any name, with `custom_model_url` set | `CUSTOM_MODEL_KEY` |
 
 > `claude-*` model ids routed through **CommandCode** only work via its
 > `/messages` endpoint, not `/chat/completions` — they'll 400 through this
 > gateway. Use `claude-*` directly (Anthropic Claude row above) instead.
+
+> **lmarena2api** is a server you run yourself (see its README for the
+> Docker command and the `LA_COOKIE`/`CF_CLEARANCE` values it needs from
+> lmarena.ai) — this agent just talks to it as an OpenAI-compatible
+> endpoint. It defaults to `http://localhost:10088/v1`; set
+> `lmarena_base_url` in `config.yaml` (or `LMARENA_BASE_URL`) if you run it
+> on a different host/port, and use whichever model id its README
+> currently lists as supported.
 
 **Hybrid routing**: set `routing_mode: hybrid` plus `fast_model` and
 `reasoning_model` in `config.yaml` to automatically route short/simple
@@ -137,6 +147,8 @@ COMMANDCODE_API_KEY=your-key-here
 ANTHROPIC_API_KEY=your-key-here
 DEEPSEEK_API_KEY=your-key-here
 OPENROUTER_API_KEY=your-key-here
+LMARENA_API_KEY=your-api-secret-here
+LMARENA_BASE_URL=http://localhost:10088/v1
 ```
 
 A value already set in your shell environment always takes precedence over
@@ -199,7 +211,7 @@ Autononymous/
 │   ├── server.py          # Flask web backend (start_web_panel.bat/.sh) — the working one
 │   ├── index.html, index.js, styles.css
 ├── autonomous.py         # /continuous, /iterate, /autonomous, /stream, /autocorrect
-├── models.py              # Ollama / Anthropic / DeepSeek / OpenRouter / CommandCode / custom backends, hybrid routing
+├── models.py              # Ollama / Anthropic / DeepSeek / OpenRouter / CommandCode / lmarena2api / custom backends, hybrid routing
 ├── verify.py               # Compiler-in-the-loop syntax checks
 ├── reasoning.py             # Reflection loop + best-of-N
 ├── retrieval.py              # Hierarchical codebase search + map-reduce summarization

@@ -1377,7 +1377,8 @@ def main(
         "--model",
         "-m",
         help="Model name (e.g. llama3.1:8b, commandcode:deepseek/deepseek-v4-pro, "
-        "claude-3-5-sonnet-20241022; or any name if custom_model_url is set).",
+        "claude-3-5-sonnet-20241022, lmarena:claude-3-5-sonnet-20241022; "
+        "or any name if custom_model_url is set).",
     ),
     max_turns: Optional[int] = typer.Option(
         None,
