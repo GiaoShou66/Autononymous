@@ -218,6 +218,39 @@ class _OllamaBackend:
 
         return self.model_name
 
+    def _truncate_messages(self, messages: List[Dict[str, Any]], max_chars: int = 60000) -> List[Dict[str, Any]]:
+        """Truncate messages to fit within a character limit to prevent Ollama truncation errors."""
+        current_total = sum(len(msg.get("content", "")) for msg in messages if isinstance(msg.get("content"), str))
+        if current_total <= max_chars:
+            return messages
+
+        # Truncate oldest messages first, keeping the most recent ones and the system prompt
+        truncated = []
+        system_prompt = None
+        
+        # Separate system prompt
+        for msg in messages:
+            if msg.get("role") == "system":
+                system_prompt = msg
+            else:
+                truncated.append(msg)
+        
+        # Keep the most recent messages that fit
+        final_messages = []
+        running_total = 0
+        for msg in reversed(truncated):
+            content_len = len(msg.get("content", "")) if isinstance(msg.get("content"), str) else 0
+            if running_total + content_len > max_chars:
+                break
+            final_messages.append(msg)
+            running_total += content_len
+        
+        final_messages.reverse()
+        if system_prompt:
+            final_messages.insert(0, system_prompt)
+            
+        return final_messages
+
     def chat(
         self,
         messages: List[Dict[str, Any]],
@@ -225,16 +258,18 @@ class _OllamaBackend:
         on_delta: Callable[[str], None] | None = None,
     ) -> Dict[str, Any]:
         model_name = self._resolve_model_name()
+        
+        # Prevent Ollama "closing '}' symbol" error by limiting payload size
+        messages = self._truncate_messages(messages)
+        
         payload: Dict[str, Any] = {
             "model": model_name,
             "messages": messages,
             "stream": on_delta is not None,
         }
-        # Ollama's native thinking mode lets reasoning-capable local models
-        # (including gpt-oss) use an internal reasoning pass. The final answer
-        # remains the normal assistant content; thought tokens are not exposed.
-        if self.reasoning:
-            payload["think"] = True
+        # Ollama's native thinking mode is typically handled by the model
+        # internally or via prompt templates, not a top-level API parameter.
+        # Removed payload["think"] = True as it causes 400 Bad Request.
         num_predict = os.getenv("OLLAMA_NUM_PREDICT")
         if num_predict and num_predict.isdigit() and int(num_predict) > 0:
             payload["options"] = {"num_predict": int(num_predict)}
@@ -242,8 +277,16 @@ class _OllamaBackend:
             payload["tools"] = tools
 
         try:
+            # Use explicit json.dumps for better control and logging
+            json_payload = json.dumps(payload)
+            # Log payload size for debugging truncation issues
+            # print(f"Sending Ollama request. Size: {len(json_payload)} bytes. Model: {model_name}")
+            
             resp = requests.post(
-                self._chat_endpoint(), json=payload, timeout=self.timeout,
+                self._chat_endpoint(), 
+                data=json_payload, 
+                headers={'Content-Type': 'application/json'}, 
+                timeout=self.timeout,
                 stream=on_delta is not None,
             )
             resp.raise_for_status()

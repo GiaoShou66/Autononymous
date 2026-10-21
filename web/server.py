@@ -32,7 +32,7 @@ from media import analyze_media, encode_image_base64, get_image_info
 # Attachments the "+" / paperclip buttons can upload inline into a message.
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff"}
 MEDIA_EXTS = {".mp3", ".wav", ".flac", ".ogg", ".m4a", ".mp4", ".avi", ".mkv", ".mov", ".webm"}
-UPLOAD_MAX_CHARS = 100_000
+UPLOAD_MAX_CHARS = 15_000
 
 app = Flask(__name__, static_folder='.', static_url_path='')
 CORS(app)
