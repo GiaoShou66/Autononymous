@@ -140,12 +140,13 @@ the CLI or the routing dropdowns in the web panel.
 
 ### API keys — never in `config.yaml`
 
-`config.yaml` is git-tracked — that's why its `*_api_key` fields are left
-blank; a real key pasted there would end up in git history. Put keys in
-**`.env.local`** instead (same directory, already in `.gitignore`, loaded
-automatically on startup). `.env.local` isn't committed to the repo, so it
-doesn't exist until you create it — copy `.env.local.example` to
-`.env.local` and fill in only what you use:
+`config.yaml` is git-tracked, so it has no `*_api_key` fields at all — a
+real key pasted into a git-tracked file stays in git history permanently
+even after the line is edited again. Every backend reads its key straight
+from the environment instead. Put keys in **`.env.local`** (same directory,
+already in `.gitignore`, loaded automatically on startup). `.env.local`
+isn't committed to the repo, so it doesn't exist until you create it — copy
+`.env.local.example` to `.env.local` and fill in only what you use:
 
 ```
 COMMANDCODE_API_KEY=your-key-here
