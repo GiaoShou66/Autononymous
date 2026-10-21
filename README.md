@@ -1,5 +1,7 @@
 # Autononymous
 
+> **For educational and legal use only.** User bears sole responsibility for compliance with applicable laws and third-party terms of service.
+
 A local, unrestricted AI coding agent with two interfaces — a terminal CLI and a
 browser-based web panel — backed by your choice of model (local Ollama,
 Anthropic Claude, DeepSeek, OpenRouter, or the multi-provider CommandCode AI
@@ -190,7 +192,7 @@ Everything lives in `config.yaml`. Key sections:
 ## Project layout
 
 ```
-my-ai-agent/
+Autononymous/
 ├── agent.py              # Core agent loop, tool dispatch, hooks/memory wiring
 ├── cli.py                # Terminal REPL (start_cli.bat/.sh)
 ├── webui.py               # Starlette web backend — currently broken, see above
