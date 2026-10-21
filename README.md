@@ -20,7 +20,6 @@ python -m venv .venv
 python -m pip install -r requirements.txt
 
 # 3. Run it
-start_cli.bat          # terminal CLI
 start_web_panel.bat    # browser web panel (http://localhost:5000)
 ```
 
@@ -49,7 +48,7 @@ launcher stub entirely.
 
 ### CLI (`cli.py`)
 
-An interactive terminal REPL. Run `start_cli.bat`, then type `/help` for the
+An interactive terminal REPL. Type `/help` for the
 full command list. Highlights:
 
 | Category | Commands |
@@ -194,7 +193,7 @@ Everything lives in `config.yaml`. Key sections:
 ```
 Autononymous/
 ├── agent.py              # Core agent loop, tool dispatch, hooks/memory wiring
-├── cli.py                # Terminal REPL (start_cli.bat/.sh)
+├── cli.py                # Terminal REPL
 ├── webui.py               # Starlette web backend — currently broken, see above
 ├── web/
 │   ├── server.py          # Flask web backend (start_web_panel.bat/.sh) — the working one
