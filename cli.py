@@ -16,6 +16,13 @@ except ImportError:
     readline = None
 
 try:
+    import termios  # Unix only; used for the arrow-key interactive question picker
+    import tty
+except ImportError:
+    termios = None
+    tty = None
+
+try:
     from pygments import lex
     from pygments.lexers import get_lexer_for_filename, TextLexer
     from pygments.token import Token
@@ -746,6 +753,222 @@ def _approval_prompt(action: str, detail: str) -> bool:
     return answer == "y"
 
 
+def _read_key() -> str:
+    """Read one keypress from stdin in raw mode, decoding arrow-key escapes."""
+    import select
+
+    fd = sys.stdin.fileno()
+    old = termios.tcgetattr(fd)
+    try:
+        tty.setraw(fd)
+        ch = sys.stdin.read(1)
+        if ch == "\x1b":
+            # Lone Esc, or the start of an arrow-key escape sequence (\x1b[A etc).
+            if select.select([sys.stdin], [], [], 0.05)[0]:
+                ch2 = sys.stdin.read(1)
+                if ch2 == "[" and select.select([sys.stdin], [], [], 0.05)[0]:
+                    code = sys.stdin.read(1)
+                    return {"A": "up", "B": "down", "C": "right", "D": "left"}.get(code, "")
+            return "esc"
+        if ch in ("\r", "\n"):
+            return "enter"
+        if ch == " ":
+            return "space"
+        if ch == "\x03":
+            raise KeyboardInterrupt
+        if ch == "k":
+            return "up"
+        if ch == "j":
+            return "down"
+        if ch == "\t":
+            return "down"
+        return ch
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+
+def _render_question_frame(
+    header_trail: list[str],
+    question: str,
+    options: list[dict],
+    multi_select: bool,
+    cursor: int,
+    selected: set[int],
+    other_index: int,
+) -> str:
+    lines = []
+    if header_trail:
+        crumbs = [
+            f"[bold cyan]{escape(h)}[/bold cyan]" if i == len(header_trail) - 1 else f"[dim]{escape(h)}[/dim]"
+            for i, h in enumerate(header_trail)
+        ]
+        lines.append(" › ".join(crumbs))
+        lines.append("")
+    lines.append(f"[bold]{escape(question)}[/bold]")
+    lines.append("")
+
+    total = other_index + 1
+    for i in range(total):
+        is_cursor = i == cursor
+        pointer = "[bold cyan]›[/bold cyan]" if is_cursor else " "
+        if i == other_index:
+            label_fmt = "[bold cyan]Type something...[/bold cyan]" if is_cursor else "[dim]Type something...[/dim]"
+            lines.append(f"{pointer} {i + 1}. {label_fmt}")
+            continue
+        opt = options[i]
+        box = ""
+        if multi_select:
+            box = "[bold green]●[/bold green] " if i in selected else "[dim]○[/dim] "
+        label = escape(opt.get("label", ""))
+        if is_cursor:
+            label_fmt = f"[bold cyan]{label}[/bold cyan]"
+        elif not multi_select and i in selected:
+            label_fmt = f"[bold green]{label}[/bold green] [green]✓[/green]"
+        else:
+            label_fmt = label
+        lines.append(f"{pointer} {i + 1}. {box}{label_fmt}")
+        desc = opt.get("description")
+        if desc:
+            lines.append(f"      [dim]{escape(desc)}[/dim]")
+
+    lines.append("")
+    hint = "Space to toggle · Enter to confirm" if multi_select else "Enter to select"
+    lines.append(f"[dim]{hint} · ↑/↓ or j/k to move · number to jump · Esc to skip[/dim]")
+    return "\n".join(lines)
+
+
+def _fallback_pick(
+    header_trail: list[str], question: str, options: list[dict], multi_select: bool
+) -> Optional[list[str]]:
+    """Plain numbered-prompt picker used when raw terminal mode isn't available
+    (no tty, piped stdin, or non-Unix)."""
+    if header_trail:
+        console.print(" › ".join(f"[dim]{escape(h)}[/dim]" for h in header_trail))
+    console.print(f"[bold]{escape(question)}[/bold]")
+    for i, opt in enumerate(options, 1):
+        console.print(f"  {i}. {escape(opt.get('label', ''))}")
+        if opt.get("description"):
+            console.print(f"     [dim]{escape(opt['description'])}[/dim]")
+    other_num = len(options) + 1
+    console.print(f"  {other_num}. Type something...")
+    label = "Pick option number(s), comma-separated (blank to skip)" if multi_select else "Pick option number (blank to skip)"
+    raw = Prompt.ask(label, default="").strip()
+    if not raw:
+        return None
+
+    def resolve(token: str) -> Optional[str]:
+        token = token.strip()
+        if not token:
+            return None
+        if token.isdigit():
+            idx = int(token)
+            if idx == other_num:
+                free = Prompt.ask("Your answer").strip()
+                return free or None
+            if 1 <= idx <= len(options):
+                return options[idx - 1]["label"]
+            return None
+        return token  # treat free text itself as the answer
+
+    if multi_select:
+        picks = [p for p in (resolve(t) for t in raw.split(",")) if p]
+        return picks or None
+    picked = resolve(raw)
+    return [picked] if picked else None
+
+
+def _interactive_pick(
+    header_trail: list[str], question: str, options: list[dict], multi_select: bool
+) -> Optional[list[str]]:
+    """
+    Claude-Code-style interactive picker for one question: arrow keys (or
+    j/k) move the cursor, Space toggles a choice on multi-select questions,
+    Enter confirms, Esc skips. Returns the chosen label(s), or None if
+    skipped/cancelled. Falls back to a plain numbered prompt when stdin
+    isn't an interactive TTY.
+    """
+    if termios is None or tty is None or not sys.stdin.isatty():
+        return _fallback_pick(header_trail, question, options, multi_select)
+
+    other_index = len(options)
+    cursor = 0
+    selected: set[int] = set()
+    prev_lines = 0
+    try:
+        while True:
+            frame = _render_question_frame(
+                header_trail, question, options, multi_select, cursor, selected, other_index
+            )
+            if prev_lines:
+                sys.stdout.write(f"\x1b[{prev_lines}A\x1b[J")
+            with console.capture() as cap:
+                console.print(frame, highlight=False)
+            rendered = cap.get()
+            sys.stdout.write(rendered)
+            sys.stdout.flush()
+            prev_lines = rendered.count("\n")
+
+            total = other_index + 1
+            key = _read_key()
+            if key == "up":
+                cursor = (cursor - 1) % total
+            elif key == "down":
+                cursor = (cursor + 1) % total
+            elif key.isdigit() and key != "0":
+                idx = int(key) - 1
+                if 0 <= idx < total:
+                    cursor = idx
+            elif key == "space" and multi_select and cursor != other_index:
+                selected.symmetric_difference_update({cursor})
+            elif key == "enter":
+                if cursor == other_index:
+                    free = Prompt.ask("Your answer").strip()
+                    return [free] if free else None
+                if multi_select:
+                    picks = selected or {cursor}
+                    return [options[i]["label"] for i in sorted(picks)]
+                return [options[cursor]["label"]]
+            elif key == "esc":
+                return None
+    except KeyboardInterrupt:
+        return None
+
+
+def _ask_user_question_ui(questions: list) -> str:
+    """
+    Tool callback for ask_user_question: renders each question as an
+    interactive picker (single- or multi-select) and returns a plain-text
+    transcript of the user's answers for the model to read as the tool result.
+    """
+    if not questions:
+        return "No questions provided."
+
+    headers = [q.get("header") or (q.get("question", "")[:12] or f"Q{i + 1}") for i, q in enumerate(questions)]
+    console.print()
+    answers = []
+    for i, q in enumerate(questions):
+        options = q.get("options") or []
+        if not options:
+            continue
+        trail = [f"{h} ✓" if j < i else h for j, h in enumerate(headers)]
+        picks = _interactive_pick(trail, q.get("question", ""), options, bool(q.get("multi_select")))
+        if picks is None:
+            console.print("[yellow]→ skipped[/yellow]\n")
+            answers.append((q.get("question", ""), None))
+        else:
+            console.print(f"[green]✓[/green] {', '.join(picks)}\n")
+            answers.append((q.get("question", ""), picks))
+
+    if not answers:
+        return "No questions had options; nothing was asked."
+
+    parts = []
+    for question_text, picks in answers:
+        answer_text = ", ".join(picks) if picks else "(skipped — no preference given)"
+        parts.append(f"Q: {question_text}\nA: {answer_text}")
+    return "\n\n".join(parts)
+
+
 def _ask_streaming(
     agent: Agent,
     prompt: str,
@@ -753,6 +976,7 @@ def _ask_streaming(
     *,
     on_tool_call=None,
     on_approval=None,
+    on_ask_question=None,
     thinking_label: str = "Thinking",
     header: str = "Agent",
 ) -> str:
@@ -784,12 +1008,19 @@ def _ask_streaming(
         if on_tool_call:
             on_tool_call(name, args, result)
 
+    def wrapped_ask_question(questions: list) -> str:
+        thinking.stop()
+        if on_ask_question:
+            return on_ask_question(questions)
+        return "ask_user_question is unavailable here."
+
     try:
         reply = agent.ask(
             prompt,
             on_tool_call=wrapped_tool_call,
             on_approval=on_approval,
             on_token=show_token,
+            on_ask_question=wrapped_ask_question,
         )
     except KeyboardInterrupt:
         partial = "".join(streamed)
@@ -2203,6 +2434,7 @@ def main(
                 _ask_streaming(
                     agent, prompt, ui_state,
                     on_tool_call=_on_tool_call, on_approval=_approval_prompt,
+                    on_ask_question=_ask_user_question_ui,
                 )
                 save_active_session()
             else:
@@ -2227,6 +2459,7 @@ def main(
                 _ask_streaming(
                     agent, prompt, ui_state,
                     on_tool_call=_on_tool_call, on_approval=_approval_prompt,
+                    on_ask_question=_ask_user_question_ui,
                 )
                 save_active_session()
             else:
@@ -2310,6 +2543,7 @@ def main(
                         reply = agent.ask_with_reflection(
                             rest, rounds=count,
                             on_tool_call=_on_tool_call, on_approval=_approval_prompt,
+                    on_ask_question=_ask_user_question_ui,
                         )
                     else:
                         reply = agent.ask_best_of_n(rest, n=count)
@@ -2519,6 +2753,7 @@ def main(
             ui_state,
             on_tool_call=_on_tool_call,
             on_approval=_approval_prompt,
+            on_ask_question=_ask_user_question_ui,
             thinking_label=f"Thinking in {agent.mode} mode{flag_str}",
         )
         save_active_session()
