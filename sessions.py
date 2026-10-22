@@ -31,23 +31,34 @@ def _repair_orphaned_tool_messages(history: List[Dict[str, Any]]) -> List[Dict[s
     return repaired
 
 
-def _repair_null_tool_call_types(history: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _repair_malformed_tool_calls(history: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
-    Normalize any tool_calls[].type that is missing/null/empty to
-    "function" (the only valid value). Some backends (e.g. CommandCode AI)
-    return "type": null explicitly instead of omitting the key; before the
-    fix in models.py that null was stored verbatim in history and got
-    replayed back to the backend on the next turn, which rejects it with a
-    400 ("Invalid input: expected \"function\""). Repairing on load means a
-    session saved while that bug was live self-heals the moment it's
-    resumed, instead of failing on every turn forever.
+    Normalize two tool_calls shape bugs that CommandCode AI's gateway used
+    to trigger before they were fixed in models.py, so a session saved
+    while either bug was live self-heals the moment it's resumed instead
+    of failing on every turn forever:
+
+    - type missing/null/empty -> "function" (the only valid value).
+      CommandCode returns "type": null explicitly instead of omitting the
+      key; the null was stored verbatim and rejected on replay with
+      "Invalid input: expected \"function\"".
+    - function.arguments not a string -> JSON-re-encoded. Arguments must
+      always be a JSON-encoded string per the OpenAI-style spec; an
+      already-parsed object (or a missing key, previously defaulted to a
+      dict) was stored verbatim and rejected on replay with "Invalid
+      input: expected string, received object".
     """
     for message in history:
         if message.get("role") != "assistant":
             continue
         for call in message.get("tool_calls") or []:
-            if isinstance(call, dict) and not call.get("type"):
+            if not isinstance(call, dict):
+                continue
+            if not call.get("type"):
                 call["type"] = "function"
+            func = call.get("function")
+            if isinstance(func, dict) and not isinstance(func.get("arguments"), str):
+                func["arguments"] = json.dumps(func.get("arguments") or {})
     return history
 
 
@@ -128,7 +139,7 @@ class SessionStore:
             raise ValueError("Corrupt session file.")
         if isinstance(data.get("history"), list):
             data["history"] = _repair_orphaned_tool_messages(data["history"])
-            data["history"] = _repair_null_tool_call_types(data["history"])
+            data["history"] = _repair_malformed_tool_calls(data["history"])
         return data
 
     def list_sessions(self) -> List[Dict[str, Any]]:

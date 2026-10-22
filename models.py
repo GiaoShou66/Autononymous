@@ -144,8 +144,14 @@ def _stream_chat_completions_response(response, on_delta: Callable[[str], None])
     else:
         calls = [tool_calls[index] for index in sorted(tool_calls)]
     if calls:
-        result["tool_calls"] = [
-            {
+        def _normalise_call(call):
+            # function.arguments must always be a JSON-encoded string —
+            # calls built incrementally above already satisfy this, but
+            # calls taken straight from full_message.get("tool_calls")
+            # (an unnormalized, backend-provided object) might not.
+            raw_arguments = (call.get("function") or {}).get("arguments", "{}")
+            arguments = raw_arguments if isinstance(raw_arguments, str) else json.dumps(raw_arguments)
+            return {
                 "id": call.get("id"),
                 # .get("type", "function") would only catch a missing key —
                 # some backends (e.g. CommandCode AI) return "type": null
@@ -154,11 +160,10 @@ def _stream_chat_completions_response(response, on_delta: Callable[[str], None])
                 "type": call.get("type") or "function",
                 "function": {
                     "name": (call.get("function") or {}).get("name", ""),
-                    "arguments": (call.get("function") or {}).get("arguments", "{}"),
+                    "arguments": arguments,
                 },
             }
-            for call in calls
-        ]
+        result["tool_calls"] = [_normalise_call(call) for call in calls]
     return result
 
 # Backend detection helpers
@@ -359,6 +364,15 @@ class _ChatCompletionsBackend:
         if tool_calls:
             normalised = []
             for tc in tool_calls:
+                # function.arguments must always be a JSON-encoded string
+                # per the OpenAI-style spec. Some backends (e.g. CommandCode
+                # AI) hand back an already-parsed object instead, or the
+                # key is missing entirely (default {} is itself a dict,
+                # not a string) — either way, re-encode anything that
+                # isn't already a string, or the backend rejects it on the
+                # next turn with "expected string, received object".
+                raw_arguments = tc.get("function", {}).get("arguments", "{}")
+                arguments = raw_arguments if isinstance(raw_arguments, str) else json.dumps(raw_arguments)
                 normalised.append({
                     "id": tc.get("id"),
                     # .get("type", "function") only catches a missing key —
@@ -368,7 +382,7 @@ class _ChatCompletionsBackend:
                     "type": tc.get("type") or "function",
                     "function": {
                         "name": tc.get("function", {}).get("name", ""),
-                        "arguments": tc.get("function", {}).get("arguments", {}),
+                        "arguments": arguments,
                     }
                 })
             return {
