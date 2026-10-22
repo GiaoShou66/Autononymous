@@ -147,7 +147,11 @@ def _stream_chat_completions_response(response, on_delta: Callable[[str], None])
         result["tool_calls"] = [
             {
                 "id": call.get("id"),
-                "type": call.get("type", "function"),
+                # .get("type", "function") would only catch a missing key —
+                # some backends (e.g. CommandCode AI) return "type": null
+                # explicitly, which .get() happily passes through as None.
+                # `or` catches that too; "function" is the only valid value.
+                "type": call.get("type") or "function",
                 "function": {
                     "name": (call.get("function") or {}).get("name", ""),
                     "arguments": (call.get("function") or {}).get("arguments", "{}"),
@@ -357,7 +361,11 @@ class _ChatCompletionsBackend:
             for tc in tool_calls:
                 normalised.append({
                     "id": tc.get("id"),
-                    "type": tc.get("type", "function"),
+                    # .get("type", "function") only catches a missing key —
+                    # some backends (e.g. CommandCode AI) return
+                    # "type": null explicitly, which .get() passes through
+                    # as None. `or` catches that too.
+                    "type": tc.get("type") or "function",
                     "function": {
                         "name": tc.get("function", {}).get("name", ""),
                         "arguments": tc.get("function", {}).get("arguments", {}),

@@ -48,6 +48,19 @@ cfg = None
 _pending_questions: dict[str, Queue] = {}
 _pending_questions_lock = Lock()
 
+# `agent` is one global instance shared by every request — agent.ask()
+# mutates agent.history (and the per-call _approval_cb/_ask_question_cb)
+# with no isolation between requests. Two concurrent agent.ask() calls can
+# interleave their appends (e.g. a second message arriving while the first
+# is blocked inside on_ask_question waiting on the user), which corrupts
+# the tool_calls/tool-result pairing in history and surfaces later as a
+# confusing 400 from the backend ("tool message must follow tool_calls").
+# This lock serializes agent.ask() across requests so that can't happen.
+# It does NOT cover /api/chat/answer, which only delivers an answer into a
+# Queue and never touches agent.history, so it can't deadlock against a
+# blocked agent.ask() call holding this lock.
+_agent_lock = Lock()
+
 
 def _format_question_answers(answers) -> str:
     """Render the frontend's answer list as the tool-result text the model reads."""
@@ -166,7 +179,8 @@ def chat():
 
         # Get response from agent
         try:
-            response = agent.ask(message)
+            with _agent_lock:
+                response = agent.ask(message)
         except Exception as agent_error:
             print(f"Agent error: {agent_error}")
             import traceback
@@ -249,7 +263,13 @@ def chat_stream():
 
             def worker():
                 try:
-                    reply = agent.ask(message, on_token=on_token, on_ask_question=on_ask_question)
+                    # Held for the whole agent.ask() call, including any
+                    # time blocked inside on_ask_question waiting on the
+                    # user — see _agent_lock's comment above. A second
+                    # request (another message, another tab) simply waits
+                    # its turn here instead of corrupting shared history.
+                    with _agent_lock:
+                        reply = agent.ask(message, on_token=on_token, on_ask_question=on_ask_question)
                     events.put({'type': 'done', 'reply': reply})
                 except Exception as exc:
                     events.put({'type': 'error', 'message': str(exc)})
