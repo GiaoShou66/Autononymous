@@ -31,6 +31,26 @@ def _repair_orphaned_tool_messages(history: List[Dict[str, Any]]) -> List[Dict[s
     return repaired
 
 
+def _repair_null_tool_call_types(history: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Normalize any tool_calls[].type that is missing/null/empty to
+    "function" (the only valid value). Some backends (e.g. CommandCode AI)
+    return "type": null explicitly instead of omitting the key; before the
+    fix in models.py that null was stored verbatim in history and got
+    replayed back to the backend on the next turn, which rejects it with a
+    400 ("Invalid input: expected \"function\""). Repairing on load means a
+    session saved while that bug was live self-heals the moment it's
+    resumed, instead of failing on every turn forever.
+    """
+    for message in history:
+        if message.get("role") != "assistant":
+            continue
+        for call in message.get("tool_calls") or []:
+            if isinstance(call, dict) and not call.get("type"):
+                call["type"] = "function"
+    return history
+
+
 def _atomic_replace(temporary_path: Path, target_path: Path, retries: int = 5) -> None:
     """
     temporary_path.replace(target_path), retrying briefly on a transient
@@ -108,6 +128,7 @@ class SessionStore:
             raise ValueError("Corrupt session file.")
         if isinstance(data.get("history"), list):
             data["history"] = _repair_orphaned_tool_messages(data["history"])
+            data["history"] = _repair_null_tool_call_types(data["history"])
         return data
 
     def list_sessions(self) -> List[Dict[str, Any]]:
