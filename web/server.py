@@ -12,8 +12,8 @@ import uuid
 from pathlib import Path
 import json
 import time
-from threading import Thread
-from queue import Queue
+from threading import Thread, Lock
+from queue import Queue, Empty
 
 # Add parent directory to path to import agent modules
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -41,6 +41,30 @@ CORS(app)
 agent = None
 autonomous = None
 cfg = None
+
+# Pending ask_user_question() prompts: id -> Queue the frontend's answer is
+# delivered through. A streaming request's worker thread blocks on its
+# queue.get() until /api/chat/answer posts the user's picks.
+_pending_questions: dict[str, Queue] = {}
+_pending_questions_lock = Lock()
+
+
+def _format_question_answers(answers) -> str:
+    """Render the frontend's answer list as the tool-result text the model reads."""
+    if not isinstance(answers, list) or not answers:
+        return "No questions had options; nothing was asked."
+    parts = []
+    for item in answers:
+        if not isinstance(item, dict):
+            continue
+        question_text = str(item.get("question") or "")
+        picks = item.get("picks")
+        if isinstance(picks, list) and picks:
+            answer_text = ", ".join(str(p) for p in picks)
+        else:
+            answer_text = "(skipped — no preference given)"
+        parts.append(f"Q: {question_text}\nA: {answer_text}")
+    return "\n\n".join(parts) if parts else "No questions had options; nothing was asked."
 
 def initialize_agent():
     """Initialize the AI agent"""
@@ -199,9 +223,33 @@ def chat_stream():
                 if token:
                     events.put({'type': 'chunk', 'content': token})
 
+            def on_ask_question(questions):
+                """
+                Tool callback for ask_user_question: pushes an ask_question
+                event to the browser and blocks this worker thread until
+                /api/chat/answer delivers the user's picks (or a 30-minute
+                cap elapses), then returns the formatted answer text as the
+                tool result so the agent loop can continue.
+                """
+                qid = uuid.uuid4().hex
+                answer_queue = Queue()
+                with _pending_questions_lock:
+                    _pending_questions[qid] = answer_queue
+                events.put({'type': 'ask_question', 'id': qid, 'questions': questions})
+                try:
+                    return answer_queue.get(timeout=1800)
+                except Empty:
+                    return (
+                        "The user did not respond to this question in time. "
+                        "Make a reasonable assumption, state it, and continue."
+                    )
+                finally:
+                    with _pending_questions_lock:
+                        _pending_questions.pop(qid, None)
+
             def worker():
                 try:
-                    reply = agent.ask(message, on_token=on_token)
+                    reply = agent.ask(message, on_token=on_token, on_ask_question=on_ask_question)
                     events.put({'type': 'done', 'reply': reply})
                 except Exception as exc:
                     events.put({'type': 'error', 'message': str(exc)})
@@ -215,12 +263,22 @@ def chat_stream():
                 streamed_any = False
                 final_reply = None
                 while True:
-                    item = events.get()
+                    # A short timeout lets us send SSE keepalive comments
+                    # while the worker thread is blocked waiting on
+                    # on_ask_question's answer_queue — otherwise an idle
+                    # proxy/browser could close the connection mid-question.
+                    try:
+                        item = events.get(timeout=15)
+                    except Empty:
+                        yield ": keepalive\n\n"
+                        continue
                     kind = item['type']
                     if kind == '__end__':
                         break
                     if kind == 'chunk':
                         streamed_any = True
+                        yield f"data: {json.dumps(item)}\n\n"
+                    elif kind == 'ask_question':
                         yield f"data: {json.dumps(item)}\n\n"
                     elif kind == 'done':
                         final_reply = item.get('reply') or ''
@@ -254,6 +312,34 @@ def chat_stream():
         print(f"Error in chat_stream: {e}")
         import traceback
         traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/chat/answer', methods=['POST'])
+def chat_answer():
+    """
+    Deliver the user's picks for a pending ask_user_question prompt (sent
+    to the browser as an 'ask_question' SSE event) back to the worker
+    thread blocked in on_ask_question(), unblocking it so the agent's
+    tool-calling loop can continue.
+
+    Body: {"id": "<question id from the SSE event>",
+           "answers": [{"question": str, "picks": [str, ...] | null}, ...]}
+    """
+    try:
+        data = request.json or {}
+        qid = data.get('id')
+        answers = data.get('answers')
+
+        with _pending_questions_lock:
+            answer_queue = _pending_questions.get(qid)
+
+        if not qid or answer_queue is None:
+            return jsonify({'error': 'Unknown or already-answered question id'}), 404
+
+        answer_queue.put(_format_question_answers(answers))
+        return jsonify({'success': True})
+    except Exception as e:
+        print(f"Error in chat_answer: {e}")
         return jsonify({'error': str(e)}), 500
 
 def _ingest_upload(path: Path) -> str:

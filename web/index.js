@@ -398,6 +398,137 @@ function submitQuestionMulti(button) {
     sendMessage();
 }
 
+// Renders the ask_user_question tool call (Claude-Code-style picker) sent
+// as an 'ask_question' SSE event: { id, questions: [{ question, header,
+// multi_select, options: [{ label, description }] }, ...] }. Unlike the
+// ```ask / ```ask-multi fenced-block shortcut above (a prompt convention
+// the model has to remember to use), this is a real tool call the model
+// invokes directly — so it supports per-option descriptions, multiple
+// sequential questions with a breadcrumb trail, and a free-text fallback.
+// Answers are collected client-side, then POSTed to /api/chat/answer,
+// which unblocks the backend worker thread so the stream can resume.
+function renderAskQuestion(data) {
+    const { id, questions } = data;
+    if (!id || !Array.isArray(questions) || questions.length === 0) return;
+
+    const wrapper = document.createElement('div');
+    wrapper.className = 'message assistant';
+    wrapper.innerHTML = `
+        <div class="message-header">
+            <div class="message-avatar"><i class="fas fa-circle-question"></i></div>
+            <span class="message-sender">AI 助手</span>
+            <span class="message-time">${formatTime(new Date().toISOString())}</span>
+        </div>
+        <div class="question-options question-card"></div>
+    `;
+    elements.messages.appendChild(wrapper);
+    elements.messages.scrollTop = elements.messages.scrollHeight;
+    const card = wrapper.querySelector('.question-card');
+
+    const headers = questions.map((q, i) => q.header || (q.question || '').slice(0, 12) || `Q${i + 1}`);
+    const answers = [];
+    let index = 0;
+
+    function renderStep() {
+        const q = questions[index] || {};
+        const options = Array.isArray(q.options) ? q.options : [];
+        const multi = !!q.multi_select;
+
+        const breadcrumb = questions.length > 1
+            ? `<div class="question-breadcrumb">${headers.map((h, i) => {
+                  const cls = i === index ? 'current' : (i < index ? 'done' : '');
+                  const mark = i < index ? ' <i class="fas fa-check"></i>' : '';
+                  return `<span class="${cls}">${escapeHtml(h)}${mark}</span>`;
+              }).join('<i class="fas fa-chevron-right"></i>')}</div>`
+            : '';
+
+        const optionsHtml = options.length === 0 ? '' : (multi
+            ? `<div class="question-options-list question-options-list-multi">
+                   ${options.map((opt, i) => `
+                       <label class="question-option-checkbox">
+                           <input type="checkbox" value="${escapeHtml(opt.label || '')}" data-idx="${i}">
+                           <span>${escapeHtml(opt.label || '')}${opt.description ? `<div class="question-option-desc">${escapeHtml(opt.description)}</div>` : ''}</span>
+                       </label>
+                   `).join('')}
+               </div>
+               <button type="button" class="question-options-submit" data-action="submit-multi">提交</button>`
+            : `<div class="question-options-list">
+                   ${options.map((opt, i) => `
+                       <div class="question-option-item">
+                           <button type="button" class="question-option-btn" data-action="pick" data-idx="${i}">${escapeHtml(opt.label || '')}</button>
+                           ${opt.description ? `<div class="question-option-desc">${escapeHtml(opt.description)}</div>` : ''}
+                       </div>
+                   `).join('')}
+               </div>`);
+
+        card.innerHTML = `
+            ${breadcrumb}
+            <div class="question-options-prompt">${escapeHtml(q.question || '')}</div>
+            ${optionsHtml}
+            <div class="question-other-row">
+                <input type="text" class="question-other-input" placeholder="输入你自己的答案…">
+                <button type="button" class="question-other-submit" data-action="other">发送</button>
+            </div>
+        `;
+
+        const disableAll = () => {
+            card.querySelectorAll('button, input').forEach(el => { el.disabled = true; });
+        };
+
+        card.querySelectorAll('[data-action="pick"]').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const opt = options[Number(btn.dataset.idx)] || {};
+                disableAll();
+                btn.classList.add('selected');
+                advance([opt.label || '']);
+            });
+        });
+
+        const submitMulti = card.querySelector('[data-action="submit-multi"]');
+        if (submitMulti) {
+            submitMulti.addEventListener('click', () => {
+                const checked = Array.from(card.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.value);
+                disableAll();
+                advance(checked.length ? checked : null);
+            });
+        }
+
+        const otherInput = card.querySelector('.question-other-input');
+        const otherSubmit = card.querySelector('[data-action="other"]');
+        const sendOther = () => {
+            const val = otherInput.value.trim();
+            if (!val) return;
+            disableAll();
+            advance([val]);
+        };
+        otherSubmit.addEventListener('click', sendOther);
+        otherInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') { e.preventDefault(); sendOther(); }
+        });
+    }
+
+    function advance(picks) {
+        answers.push({ question: questions[index].question || '', picks });
+        index += 1;
+        elements.messages.scrollTop = elements.messages.scrollHeight;
+        if (index < questions.length) {
+            renderStep();
+        } else {
+            card.innerHTML = `<div class="question-answered"><i class="fas fa-circle-check"></i> 已回答</div>`;
+            fetch('/api/chat/answer', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id, answers }),
+            }).catch(err => {
+                console.error('Failed to send question answer:', err);
+                card.innerHTML = `<div class="question-answered">发送答案失败，请重试或直接在下方输入消息。</div>`;
+            });
+        }
+    }
+
+    renderStep();
+}
+
 function formatTime(timestamp) {
     const date = new Date(timestamp);
     const now = new Date();
@@ -575,6 +706,11 @@ async function sendToAPIStreaming(message, typingEl) {
                             fullResponse += data.content;
                             contentEl.innerHTML = formatContent(fullResponse);
                             elements.messages.scrollTop = elements.messages.scrollHeight;
+                        } else if (data.type === 'ask_question') {
+                            // The agent called the ask_user_question tool.
+                            // Render an interactive picker; the stream stays
+                            // open and resumes once /api/chat/answer is posted.
+                            renderAskQuestion(data);
                         } else if (data.type === 'end') {
                             // Streaming complete
                             break;

@@ -7,29 +7,25 @@ model_name: "commandcode:moonshotai/Kimi-K3"
 routing_mode: hybrid
 fast_model: "commandcode:moonshotai/Kimi-K3"
 reasoning_model: "commandcode:deepseek/deepseek-v4-pro"
-# ─── CommandCode API key ───────────────────────────────────────────────────────
-# Do NOT paste a real key here — this file is git-tracked and a committed
-# key stays in git history permanently, even after this line is edited again.
-# Put it in .env.local instead (COMMANDCODE_API_KEY=...), which is NOT
-# git-tracked (see .gitignore) and is loaded automatically on startup.
-commandcode_api_key: ""
-# ─── DeepSeek direct API key ────────────────────────────────────────────────
-# For model_name: "deepseek:deepseek-chat" or "deepseek:deepseek-reasoner".
-# Same rule: do NOT paste a real key here. Put it in .env.local instead
-# (DEEPSEEK_API_KEY=...).
-deepseek_api_key: ""
-# ─── lmarena2api (self-hosted) ──────────────────────────────────────────────
-# Connects to a locally-run https://github.com/deanxv/lmarena2api instance,
-# an OpenAI-compatible proxy in front of LMArena's chat models. For
-# model_name: "lmarena:<model-id>" — see that project's README for which
-# model ids it currently supports (e.g. "lmarena:claude-3-5-sonnet-20241022").
-# lmarena_base_url defaults to http://localhost:10088/v1 (lmarena2api's
-# default port) if left blank — only set it if you run the server elsewhere.
-# lmarena_api_key is the API_SECRET you passed when starting the lmarena2api
-# container. Same rule: do NOT paste a real key here. Put both in
-# .env.local instead (LMARENA_BASE_URL=..., LMARENA_API_KEY=...).
-lmarena_base_url: ""
-lmarena_api_key: ""
+# ─── API keys ────────────────────────────────────────────────────────────────
+# None of them live here — this file is git-tracked, and a real key pasted
+# into a git-tracked file stays in git history permanently even after the
+# line is edited again. Every backend below reads its key straight from the
+# environment instead; set it in .env.local (git-ignored, loaded
+# automatically on startup — see .env.local.example) or a real shell
+# environment variable, which always takes precedence:
+#
+#   COMMANDCODE_API_KEY  — for model_name: "commandcode:<model-id>"
+#   DEEPSEEK_API_KEY     — for model_name: "deepseek:deepseek-chat" / "deepseek-reasoner"
+#   OPENROUTER_API_KEY   — for model_name: "openrouter:<model-id>"
+#   ANTHROPIC_API_KEY    — for model_name: "claude-*"
+#   LMARENA_API_KEY      — for model_name: "lmarena:<model-id>", a self-hosted
+#                           https://github.com/deanxv/lmarena2api instance.
+#                           Base URL also isn't a config.yaml setting — it's
+#                           resolved in models.py (_LMArenaBackend), defaulting
+#                           to http://localhost:10088/v1; override with
+#                           LMARENA_BASE_URL only if you run it elsewhere.
+#   CUSTOM_MODEL_KEY      — for the custom_model_url escape hatch (CUSTOM_MODEL_URL env var), if it needs auth
 # ─── Autonomous Agent Features ────────────────────────────────────────────────
 # Enable advanced autonomous capabilities
 enable_auto_continuation: true      # Auto-continue long generations
