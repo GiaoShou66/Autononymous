@@ -673,15 +673,15 @@ def clear_chat():
 
 @app.route('/api/routing', methods=['POST'])
 def set_routing():
-    """Switch between single-model and hybrid (fast/reasoning) routing."""
+    """Switch between single-model, hybrid (fast/reasoning), and relay (reasoning drafts, fast finalizes) routing."""
     global agent
 
     try:
         data = request.json or {}
         routing_mode = (data.get('routing_mode') or '').strip().lower()
 
-        if routing_mode not in ('single', 'hybrid'):
-            return jsonify({'error': 'routing_mode must be "single" or "hybrid"'}), 400
+        if routing_mode not in ('single', 'hybrid', 'relay'):
+            return jsonify({'error': 'routing_mode must be "single", "hybrid", or "relay"'}), 400
 
         if routing_mode == 'single':
             model_name = (data.get('model') or '').strip()
@@ -693,8 +693,8 @@ def set_routing():
             fast_model = (data.get('fast_model') or '').strip()
             reasoning_model = (data.get('reasoning_model') or '').strip()
             if not fast_model or not reasoning_model:
-                return jsonify({'error': 'hybrid mode needs both fast_model and reasoning_model'}), 400
-            agent.model.routing_mode = 'hybrid'
+                return jsonify({'error': f'{routing_mode} mode needs both fast_model and reasoning_model'}), 400
+            agent.model.routing_mode = routing_mode
             agent.model.fast_model = fast_model
             agent.model.reasoning_model = reasoning_model
 

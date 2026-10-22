@@ -135,8 +135,18 @@ Set `model_name` in `config.yaml`:
 **Hybrid routing**: set `routing_mode: hybrid` plus `fast_model` and
 `reasoning_model` in `config.yaml` to automatically route short/simple
 messages to a fast model and long/complex ones (keyword- and length-based
-heuristic, no extra classifier call) to a stronger one. See `/routing` in
-the CLI or the routing dropdowns in the web panel.
+heuristic, no extra classifier call) to a stronger one — exactly one model
+handles any given turn. See `/routing` in the CLI or the routing dropdowns
+in the web panel.
+
+**Relay routing**: `routing_mode: relay` uses the same fast/reasoning
+config and the same complexity check, but for a complex turn the reasoning
+model first produces an internal text-only draft (no tool calls), which
+gets handed to the fast model as extra context before it produces the
+actual reply — so the fast model's answer is informed by the reasoning
+model's analysis instead of being replaced by it. A simple turn still just
+uses the fast model alone, same as hybrid. This costs one extra model call
+on complex turns.
 
 ### API keys — never in `config.yaml`
 

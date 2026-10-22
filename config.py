@@ -227,7 +227,7 @@ def load_config(
         or str(yaml_cfg.get("routing_mode") or "").strip().lower()
         or DEFAULT_ROUTING_MODE
     )
-    if routing_mode not in {"single", "hybrid"}:
+    if routing_mode not in {"single", "hybrid", "relay"}:
         routing_mode = DEFAULT_ROUTING_MODE
     fast_model = (
         os.environ.get("AI_AGENT_FAST_MODEL", "").strip()

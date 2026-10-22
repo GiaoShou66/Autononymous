@@ -855,8 +855,14 @@ class ModelClient:
     last_routed_model: str = field(default="", init=False)
 
     def _route_model(self, messages: List[Dict[str, Any]]) -> str:
-        """Pick a fast or reasoning model without an extra classifier request."""
-        if self.routing_mode.strip().lower() != "hybrid":
+        """
+        Pick a fast or reasoning model without an extra classifier request.
+        Used directly by hybrid mode (whichever model this returns handles
+        the whole turn alone) and by relay mode (as the complexity check
+        deciding whether to run the reasoning-then-fast relay for this
+        turn, or just use the fast model like a simple hybrid turn would).
+        """
+        if self.routing_mode.strip().lower() not in {"hybrid", "relay"}:
             self.last_routed_model = self.model_name
             return self.model_name
 
@@ -884,7 +890,21 @@ class ModelClient:
 
     def routing_context(self) -> str:
         """Return factual routing state for inclusion in the agent prompt."""
-        if self.routing_mode.strip().lower() != "hybrid":
+        mode = self.routing_mode.strip().lower()
+        if mode == "relay":
+            return (
+                "Model routing: relay mode is active. For a turn judged complex, the "
+                "reasoning model (" + (self.reasoning_model or self.model_name) + ") first "
+                "produces an internal text-only analysis (no tools), which is handed to the "
+                "fast model (" + (self.fast_model or self.model_name) + ") as extra context; "
+                "the fast model then produces the actual reply, including any tool calls. "
+                "Simple turns skip the reasoning pass and use the fast model alone. "
+                "Last model to produce a visible reply: "
+                + (self.last_routed_model or "not selected yet") + ". "
+                "When asked about routing, use only these values; do not invent hardware, "
+                "cloud, or model-installation details."
+            )
+        if mode != "hybrid":
             return "Model routing: single-model mode using " + self.model_name + "."
         return (
             "Model routing: hybrid mode is active. Each request is handled by exactly one "
@@ -917,6 +937,70 @@ class ModelClient:
             self.last_routed_model = self.model_name
             response = self._get_backend(self.model_name).chat(
                 messages, tools=tools, on_delta=on_delta
+            )
+        return response
+
+    def _chat_relay(
+        self,
+        messages: List[Dict[str, Any]],
+        tools: List[Dict[str, Any]] | None = None,
+        on_delta: Callable[[str], None] | None = None,
+    ) -> Dict[str, Any]:
+        """
+        routing_mode "relay": for a turn _route_model judges complex, the
+        reasoning model drafts a text-only analysis first (no tools — a
+        scratchpad pass, not a tool-executing turn), then the fast model
+        gets that draft injected as extra context and produces the actual
+        reply (including any tool calls). Simple turns skip the draft pass
+        entirely and just use the fast model, same as hybrid mode would.
+        """
+        selected_model = self._route_model(messages)
+        reasoning_model = self.reasoning_model.strip()
+
+        if selected_model != reasoning_model or not reasoning_model:
+            # Simple turn (or no reasoning model configured) -> behaves
+            # exactly like hybrid mode's non-complex path.
+            backend = self._get_backend(selected_model)
+            response = backend.chat(messages, tools=tools, on_delta=on_delta)
+            if (
+                selected_model != self.model_name
+                and isinstance(backend, _OllamaBackend)
+                and self._is_missing_model_error(response)
+            ):
+                self.last_routed_model = self.model_name
+                response = self._get_backend(self.model_name).chat(
+                    messages, tools=tools, on_delta=on_delta
+                )
+            return response
+
+        reasoning_backend = self._get_backend(reasoning_model)
+        draft = reasoning_backend.chat(messages, tools=None, on_delta=None)
+        draft_text = (draft.get("content") or "").strip()
+
+        fast_model = self.fast_model.strip() or self.model_name
+        augmented = list(messages)
+        if draft_text:
+            augmented.append({
+                "role": "system",
+                "content": (
+                    "Internal analysis from a stronger reasoning model, for your "
+                    "own use only — do not mention this note or that a separate "
+                    "model produced it; just use it to inform your reply:\n\n"
+                    + draft_text
+                ),
+            })
+
+        self.last_routed_model = fast_model
+        fast_backend = self._get_backend(fast_model)
+        response = fast_backend.chat(augmented, tools=tools, on_delta=on_delta)
+        if (
+            fast_model != self.model_name
+            and isinstance(fast_backend, _OllamaBackend)
+            and self._is_missing_model_error(response)
+        ):
+            self.last_routed_model = self.model_name
+            response = self._get_backend(self.model_name).chat(
+                augmented, tools=tools, on_delta=on_delta
             )
         return response
 
@@ -959,6 +1043,8 @@ class ModelClient:
         """
         Call the selected backend and return a normalised assistant message dict.
         """
+        if self.routing_mode.strip().lower() == "relay":
+            return self._chat_relay(messages, tools=tools)
         return self._chat_routed(messages, tools=tools)
 
     def chat_stream(
@@ -968,6 +1054,8 @@ class ModelClient:
         on_delta: Callable[[str], None] | None = None,
     ) -> Dict[str, Any]:
         """Stream visible text while returning a complete normalized message."""
+        if self.routing_mode.strip().lower() == "relay":
+            return self._chat_relay(messages, tools=tools, on_delta=on_delta)
         return self._chat_routed(messages, tools=tools, on_delta=on_delta)
 
     def list_available_models(self) -> List[str]:

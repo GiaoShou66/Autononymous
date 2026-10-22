@@ -986,8 +986,9 @@ function modelOptionsHtml(models) {
 
 function updateRoutingGroupVisibility() {
     const mode = document.getElementById('routingModeSelect').value;
-    document.getElementById('singleModelGroup').style.display = mode === 'hybrid' ? 'none' : '';
-    document.getElementById('hybridModelGroup').style.display = mode === 'hybrid' ? '' : 'none';
+    const usesFastReasoning = mode === 'hybrid' || mode === 'relay';
+    document.getElementById('singleModelGroup').style.display = usesFastReasoning ? 'none' : '';
+    document.getElementById('hybridModelGroup').style.display = usesFastReasoning ? '' : 'none';
 }
 
 async function openSettings() {
@@ -1034,7 +1035,9 @@ async function openSettings() {
         if (config.fast_model) fastSelect.value = config.fast_model;
         if (config.reasoning_model) reasoningSelect.value = config.reasoning_model;
 
-        routingSelect.value = config.routing_mode === 'hybrid' ? 'hybrid' : 'single';
+        routingSelect.value = (config.routing_mode === 'hybrid' || config.routing_mode === 'relay')
+            ? config.routing_mode
+            : 'single';
         updateRoutingGroupVisibility();
     } catch (error) {
         console.error('Failed to load models:', error);
@@ -1063,8 +1066,8 @@ async function saveSettings() {
     localStorage.setItem('settings', JSON.stringify(state.settings));
 
     try {
-        const body = routingMode === 'hybrid'
-            ? { routing_mode: 'hybrid', fast_model: fastModel, reasoning_model: reasoningModel }
+        const body = (routingMode === 'hybrid' || routingMode === 'relay')
+            ? { routing_mode: routingMode, fast_model: fastModel, reasoning_model: reasoningModel }
             : { routing_mode: 'single', model: newModel };
 
         const response = await fetch('/api/routing', {

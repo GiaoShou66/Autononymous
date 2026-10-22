@@ -1,9 +1,21 @@
-# Fallback model if hybrid routing can't resolve fast/reasoning below.
+# Fallback model if hybrid/relay routing can't resolve fast/reasoning below.
 model_name: "commandcode:moonshotai/Kimi-K3"
-# Hybrid routing sends short requests to the fast model and complex,
-# multi-step requests to the reasoning model. Both route through the
-# CommandCode AI backend (models.py _CommandCodeBackend) — requires
-# COMMANDCODE_API_KEY as an environment variable. Verified live.
+# routing_mode: single | hybrid | relay
+#   single — always use model_name, ignore fast_model/reasoning_model.
+#   hybrid — short requests go to fast_model; complex, multi-step requests
+#            go to reasoning_model instead. Only ONE model handles any
+#            given turn.
+#   relay  — same complexity check as hybrid, but for a complex turn,
+#            reasoning_model first produces an internal text-only draft
+#            (no tools), which fast_model then receives as extra context
+#            before producing the actual reply (including any tool
+#            calls). A simple turn skips the draft and uses fast_model
+#            alone, same as hybrid. Costs an extra model call on complex
+#            turns in exchange for the fast model acting on the
+#            reasoning model's analysis instead of replacing it outright.
+# Both fast_model and reasoning_model route through the CommandCode AI
+# backend (models.py _CommandCodeBackend) — requires COMMANDCODE_API_KEY
+# as an environment variable. Verified live.
 routing_mode: hybrid
 fast_model: "commandcode:moonshotai/Kimi-K3"
 reasoning_model: "commandcode:deepseek/deepseek-v4-pro"

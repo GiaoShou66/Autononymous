@@ -155,6 +155,7 @@
                     <select id="routingModeSelect">
                         <option value="single">Single model</option>
                         <option value="hybrid">Hybrid (fast + reasoning)</option>
+                        <option value="relay">Relay (reasoning drafts, fast finalizes)</option>
                     </select>
                 </div>
                 <div class="setting-group" id="singleModelGroup">
@@ -162,9 +163,9 @@
                     <select id="modelSelect"></select>
                 </div>
                 <div class="setting-group" id="hybridModelGroup" style="display:none;">
-                    <label>Fast Model (simple tasks)</label>
+                    <label>Fast Model (simple tasks, or finalizes relay replies)</label>
                     <select id="fastModelSelect"></select>
-                    <label>Reasoning Model (complex tasks)</label>
+                    <label>Reasoning Model (complex tasks, or drafts for relay)</label>
                     <select id="reasoningModelSelect"></select>
                 </div>
                 <div class="setting-group">
