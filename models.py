@@ -538,6 +538,245 @@ class _OpenRouterBackend(_ChatCompletionsBackend):
     label: str = "OpenRouter backend"
 
 
+def _is_groq_model(model_name: str) -> bool:
+    """Return True if model_name starts with the 'groq:' prefix."""
+    return model_name.lower().startswith("groq:")
+
+
+@dataclass
+class _GroqBackend(_ChatCompletionsBackend):
+    """
+    Groq (groq.com) — runs open models on Groq's LPU chips, chat/completions
+    compatible. Has a free tier (rate-limited, e.g. 30 req/min).
+
+    Trigger with model_name "groq:<model-id>", e.g. "groq:llama-3.3-70b-versatile".
+    List valid ids with GET https://api.groq.com/openai/v1/models (requires key).
+
+    Set GROQ_API_KEY as an environment variable — never put a real key in
+    config.yaml, which is git-tracked.
+    """
+    base_url: str = "https://api.groq.com/openai/v1"
+    api_key: str = field(default_factory=lambda: os.getenv("GROQ_API_KEY", ""))
+    label: str = "Groq backend"
+
+
+def _is_cerebras_model(model_name: str) -> bool:
+    """Return True if model_name starts with the 'cerebras:' prefix."""
+    return model_name.lower().startswith("cerebras:")
+
+
+@dataclass
+class _CerebrasBackend(_ChatCompletionsBackend):
+    """
+    Cerebras (cerebras.ai) — chat/completions-compatible inference on
+    Cerebras's Wafer-Scale hardware. Has a free tier.
+
+    Trigger with model_name "cerebras:<model-id>", e.g. "cerebras:llama3.1-8b".
+
+    Set CEREBRAS_API_KEY as an environment variable — never put a real key
+    in config.yaml, which is git-tracked.
+    """
+    base_url: str = "https://api.cerebras.ai/v1"
+    api_key: str = field(default_factory=lambda: os.getenv("CEREBRAS_API_KEY", ""))
+    label: str = "Cerebras backend"
+
+
+def _is_mistral_model(model_name: str) -> bool:
+    """Return True if model_name starts with the 'mistral:' prefix."""
+    return model_name.lower().startswith("mistral:")
+
+
+@dataclass
+class _MistralBackend(_ChatCompletionsBackend):
+    """
+    Mistral AI's own API (api.mistral.ai) — chat/completions compatible.
+    Has a free "Experiment" tier.
+
+    Trigger with model_name "mistral:<model-id>", e.g. "mistral:mistral-small-latest".
+
+    Set MISTRAL_API_KEY as an environment variable — never put a real key
+    in config.yaml, which is git-tracked.
+    """
+    base_url: str = "https://api.mistral.ai/v1"
+    api_key: str = field(default_factory=lambda: os.getenv("MISTRAL_API_KEY", ""))
+    label: str = "Mistral backend"
+
+
+def _is_cohere_model(model_name: str) -> bool:
+    """Return True if model_name starts with the 'cohere:' prefix."""
+    return model_name.lower().startswith("cohere:")
+
+
+@dataclass
+class _CohereBackend(_ChatCompletionsBackend):
+    """
+    Cohere's OpenAI-compatibility endpoint (api.cohere.ai/compatibility/v1).
+    Free monthly quota shared across Cohere's models.
+
+    Trigger with model_name "cohere:<model-id>", e.g. "cohere:command-r-plus-08-2024".
+
+    Set COHERE_API_KEY as an environment variable — never put a real key
+    in config.yaml, which is git-tracked.
+    """
+    base_url: str = "https://api.cohere.ai/compatibility/v1"
+    api_key: str = field(default_factory=lambda: os.getenv("COHERE_API_KEY", ""))
+    label: str = "Cohere backend"
+
+
+def _is_pollinations_model(model_name: str) -> bool:
+    """Return True if model_name starts with the 'pollinations:' prefix."""
+    return model_name.lower().startswith("pollinations:")
+
+
+@dataclass
+class _PollinationsBackend(_ChatCompletionsBackend):
+    """
+    Pollinations.ai (text.pollinations.ai) — zero-friction free text API,
+    chat/completions compatible. Usable with no API key at all (lower rate
+    limit); a free key raises the limit.
+
+    Trigger with model_name "pollinations:<model-id>", e.g. "pollinations:openai".
+
+    Optionally set POLLINATIONS_API_KEY as an environment variable for a
+    higher rate limit — never put a real key in config.yaml, which is
+    git-tracked. Unlike the other backends here, this one still works with
+    api_key left empty.
+    """
+    base_url: str = "https://text.pollinations.ai/openai"
+    api_key: str = field(default_factory=lambda: os.getenv("POLLINATIONS_API_KEY", ""))
+    label: str = "Pollinations.ai backend"
+
+    def chat(
+        self,
+        messages: List[Dict[str, Any]],
+        tools: List[Dict[str, Any]] | None = None,
+        on_delta: Callable[[str], None] | None = None,
+    ) -> Dict[str, Any]:
+        # Pollinations works anonymously — skip _ChatCompletionsBackend's
+        # "No API key" short-circuit and send an Authorization header only
+        # when a key is actually configured.
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        payload: Dict[str, Any] = {
+            "model": self.model_name,
+            "messages": messages,
+            "stream": on_delta is not None,
+        }
+        if tools:
+            payload["tools"] = tools
+
+        resp, error = self._post_chat(payload, headers, stream=on_delta is not None)
+        if error:
+            status = error.pop("_status", None)
+            if status == 400 and tools:
+                retry_payload = dict(payload)
+                retry_payload.pop("tools", None)
+                resp, retry_error = self._post_chat(retry_payload, headers, stream=on_delta is not None)
+                if retry_error:
+                    retry_error.pop("_status", None)
+                    return error
+                payload = retry_payload
+            else:
+                return error
+
+        if on_delta:
+            try:
+                streamed = _stream_chat_completions_response(resp, on_delta)
+            except ChunkedEncodingError as exc:
+                print(f"Stream chunked encoding error: {exc}")
+                streamed = {"role": "assistant", "content": ""}
+            finally:
+                resp.close()
+
+            content = (streamed.get("content") or "").strip()
+            interrupted = content.startswith("(Stream interrupted")
+            if streamed.get("tool_calls") or (content and not interrupted):
+                return streamed
+
+            retry_payload = dict(payload)
+            retry_payload["stream"] = False
+            retry, retry_error = self._post_chat(retry_payload, headers, stream=False)
+            if retry_error:
+                return retry_error
+            try:
+                return self._message_from_chat_completions_json(retry.json())
+            except Exception as exc:
+                return {"role": "assistant", "content": f"[{self.label} error] {exc}"}
+            finally:
+                retry.close()
+
+        return self._message_from_chat_completions_json(resp.json())
+
+
+def _is_gemini_model(model_name: str) -> bool:
+    """Return True if model_name starts with the 'gemini:' prefix."""
+    return model_name.lower().startswith("gemini:")
+
+
+@dataclass
+class _GeminiBackend(_ChatCompletionsBackend):
+    """
+    Google AI Studio's Gemini models, via Google's own OpenAI-compatibility
+    layer (generativelanguage.googleapis.com/v1beta/openai). Has a free
+    tier (5-30 req/min depending on model).
+
+    Trigger with model_name "gemini:<model-id>", e.g. "gemini:gemini-2.5-flash-lite".
+
+    Set GEMINI_API_KEY (or GOOGLE_API_KEY) as an environment variable —
+    never put a real key in config.yaml, which is git-tracked.
+    """
+    base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai"
+    api_key: str = field(
+        default_factory=lambda: os.getenv("GEMINI_API_KEY", "") or os.getenv("GOOGLE_API_KEY", "")
+    )
+    label: str = "Google AI Studio backend"
+
+
+def _is_cloudflare_model(model_name: str) -> bool:
+    """Return True if model_name starts with the 'cloudflare:' prefix."""
+    return model_name.lower().startswith("cloudflare:")
+
+
+@dataclass
+class _CloudflareBackend(_ChatCompletionsBackend):
+    """
+    Cloudflare Workers AI, via its OpenAI-compatible endpoint. Free daily
+    neuron quota. The base URL embeds your Cloudflare account id, so it's
+    built from CLOUDFLARE_ACCOUNT_ID rather than a fixed domain.
+
+    Trigger with model_name "cloudflare:<model-id>", e.g.
+    "cloudflare:@cf/meta/llama-3.1-8b-instruct".
+
+    Set CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN as environment
+    variables — never put a real key in config.yaml, which is git-tracked.
+    """
+    base_url: str = field(
+        default_factory=lambda: (
+            f"https://api.cloudflare.com/client/v4/accounts/"
+            f"{os.getenv('CLOUDFLARE_ACCOUNT_ID', '')}/ai/v1"
+        )
+    )
+    api_key: str = field(default_factory=lambda: os.getenv("CLOUDFLARE_API_TOKEN", ""))
+    label: str = "Cloudflare Workers AI backend"
+
+    def chat(
+        self,
+        messages: List[Dict[str, Any]],
+        tools: List[Dict[str, Any]] | None = None,
+        on_delta: Callable[[str], None] | None = None,
+    ) -> Dict[str, Any]:
+        if not os.getenv("CLOUDFLARE_ACCOUNT_ID", ""):
+            return {
+                "role": "assistant",
+                "content": (
+                    f"[{self.label}] CLOUDFLARE_ACCOUNT_ID is not set — required to "
+                    "build the base URL for this backend."
+                ),
+            }
+        return super().chat(messages, tools=tools, on_delta=on_delta)
+
+
 def _is_deepseek_model(model_name: str) -> bool:
     """Return True if model_name starts with the 'deepseek:' prefix."""
     return model_name.lower().startswith("deepseek:")
@@ -821,6 +1060,13 @@ class ModelClient:
       OpenRouter            — model_name like "openrouter:anthropic/claude-3.5-sonnet"
       DeepSeek (direct)     — model_name like "deepseek:deepseek-chat"
       lmarena2api (self-hosted) — model_name like "lmarena:claude-3-5-sonnet-20241022"
+      Groq                  — model_name like "groq:llama-3.3-70b-versatile" (free tier)
+      Cerebras              — model_name like "cerebras:llama3.1-8b" (free tier)
+      Mistral (La Plateforme) — model_name like "mistral:mistral-small-latest" (free tier)
+      Cohere                — model_name like "cohere:command-r-plus-08-2024" (free tier)
+      Pollinations.ai       — model_name like "pollinations:openai" (free, no key required)
+      Google AI Studio (Gemini) — model_name like "gemini:gemini-2.5-flash-lite" (free tier)
+      Cloudflare Workers AI — model_name like "cloudflare:@cf/meta/llama-3.1-8b-instruct" (free tier)
       Custom endpoint       — set custom_model_url; routes any model_name there
 
     This client never calls any fixed third-party vendor API outside the
@@ -829,15 +1075,23 @@ class ModelClient:
     protocol that CommandCode AI and others also use.
 
     Environment variables:
-      ANTHROPIC_API_KEY   — for Anthropic Claude models
-      COMMANDCODE_API_KEY — for CommandCode AI models
-      OPENROUTER_API_KEY  — for OpenRouter models
-      DEEPSEEK_API_KEY    — for DeepSeek's own API (direct, not via a gateway)
-      LMARENA_BASE_URL    — your lmarena2api instance (default: http://localhost:10088/v1)
-      LMARENA_API_KEY     — the API_SECRET configured on that lmarena2api instance
-      CUSTOM_MODEL_KEY    — for the custom_model_url backend, if it needs auth
-      OLLAMA_BASE_URL     — override Ollama URL (default: http://localhost:11434)
-      OLLAMA_TIMEOUT      — override request timeout in seconds (default: 300)
+      ANTHROPIC_API_KEY    — for Anthropic Claude models
+      COMMANDCODE_API_KEY  — for CommandCode AI models
+      OPENROUTER_API_KEY   — for OpenRouter models
+      DEEPSEEK_API_KEY     — for DeepSeek's own API (direct, not via a gateway)
+      LMARENA_BASE_URL     — your lmarena2api instance (default: http://localhost:10088/v1)
+      LMARENA_API_KEY      — the API_SECRET configured on that lmarena2api instance
+      GROQ_API_KEY          — for Groq models
+      CEREBRAS_API_KEY      — for Cerebras models
+      MISTRAL_API_KEY       — for Mistral (La Plateforme) models
+      COHERE_API_KEY        — for Cohere models
+      POLLINATIONS_API_KEY  — optional, for Pollinations.ai (works without a key too)
+      GEMINI_API_KEY        — for Google AI Studio (Gemini) models; GOOGLE_API_KEY also accepted
+      CLOUDFLARE_ACCOUNT_ID — required to build the Cloudflare Workers AI base URL
+      CLOUDFLARE_API_TOKEN  — for Cloudflare Workers AI models
+      CUSTOM_MODEL_KEY      — for the custom_model_url backend, if it needs auth
+      OLLAMA_BASE_URL       — override Ollama URL (default: http://localhost:11434)
+      OLLAMA_TIMEOUT        — override request timeout in seconds (default: 300)
     """
 
     model_name: str
@@ -1026,6 +1280,27 @@ class ModelClient:
         if _is_lmarena_model(selected_model):
             real_name = selected_model.split(":", 1)[1] if ":" in selected_model else selected_model
             return _LMArenaBackend(model_name=real_name, timeout=self.timeout)
+        if _is_groq_model(selected_model):
+            real_name = selected_model.split(":", 1)[1] if ":" in selected_model else selected_model
+            return _GroqBackend(model_name=real_name, timeout=self.timeout)
+        if _is_cerebras_model(selected_model):
+            real_name = selected_model.split(":", 1)[1] if ":" in selected_model else selected_model
+            return _CerebrasBackend(model_name=real_name, timeout=self.timeout)
+        if _is_mistral_model(selected_model):
+            real_name = selected_model.split(":", 1)[1] if ":" in selected_model else selected_model
+            return _MistralBackend(model_name=real_name, timeout=self.timeout)
+        if _is_cohere_model(selected_model):
+            real_name = selected_model.split(":", 1)[1] if ":" in selected_model else selected_model
+            return _CohereBackend(model_name=real_name, timeout=self.timeout)
+        if _is_pollinations_model(selected_model):
+            real_name = selected_model.split(":", 1)[1] if ":" in selected_model else selected_model
+            return _PollinationsBackend(model_name=real_name, timeout=self.timeout)
+        if _is_gemini_model(selected_model):
+            real_name = selected_model.split(":", 1)[1] if ":" in selected_model else selected_model
+            return _GeminiBackend(model_name=real_name, timeout=self.timeout)
+        if _is_cloudflare_model(selected_model):
+            real_name = selected_model.split(":", 1)[1] if ":" in selected_model else selected_model
+            return _CloudflareBackend(model_name=real_name, timeout=self.timeout)
         if _is_anthropic_model(selected_model):
             return _AnthropicBackend(model_name=selected_model, base_url=ANTHROPIC_BASE_URL, timeout=self.timeout)
         return _OllamaBackend(

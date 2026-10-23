@@ -37,6 +37,16 @@ reasoning_model: "commandcode:deepseek/deepseek-v4-pro"
 #                           resolved in models.py (_LMArenaBackend), defaulting
 #                           to http://localhost:10088/v1; override with
 #                           LMARENA_BASE_URL only if you run it elsewhere.
+#   GROQ_API_KEY          — for model_name: "groq:<model-id>" (free tier)
+#   CEREBRAS_API_KEY      — for model_name: "cerebras:<model-id>" (free tier)
+#   MISTRAL_API_KEY       — for model_name: "mistral:<model-id>" (free tier)
+#   COHERE_API_KEY        — for model_name: "cohere:<model-id>" (free tier)
+#   POLLINATIONS_API_KEY  — for model_name: "pollinations:<model-id>" (works
+#                           without a key too, at a lower rate limit)
+#   GEMINI_API_KEY        — for model_name: "gemini:<model-id>" (Google AI
+#                           Studio's free tier; GOOGLE_API_KEY also accepted)
+#   CLOUDFLARE_ACCOUNT_ID — required alongside CLOUDFLARE_API_TOKEN, for
+#   CLOUDFLARE_API_TOKEN    model_name: "cloudflare:<model-id>" (free daily quota)
 #   CUSTOM_MODEL_KEY      — for the custom_model_url escape hatch (CUSTOM_MODEL_URL env var), if it needs auth
 # ─── Autonomous Agent Features ────────────────────────────────────────────────
 # Enable advanced autonomous capabilities
@@ -64,6 +74,13 @@ reasoning_enabled: true
 # model_name: "openrouter:anthropic/claude-3.5-sonnet"  # see openrouter.ai/models (set OPENROUTER_API_KEY)
 # model_name: "deepseek:deepseek-chat"  # or deepseek-reasoner (set DEEPSEEK_API_KEY)
 # model_name: "lmarena:claude-3-5-sonnet-20241022"  # via a local lmarena2api instance (set LMARENA_API_KEY)
+# model_name: "groq:llama-3.3-70b-versatile"  # free tier (set GROQ_API_KEY)
+# model_name: "cerebras:llama3.1-8b"  # free tier (set CEREBRAS_API_KEY)
+# model_name: "mistral:mistral-small-latest"  # free tier (set MISTRAL_API_KEY)
+# model_name: "cohere:command-r-plus-08-2024"  # free tier (set COHERE_API_KEY)
+# model_name: "pollinations:openai"  # free, no key required (optional POLLINATIONS_API_KEY)
+# model_name: "gemini:gemini-2.5-flash-lite"  # Google AI Studio free tier (set GEMINI_API_KEY)
+# model_name: "cloudflare:@cf/meta/llama-3.1-8b-instruct"  # free daily quota (set CLOUDFLARE_ACCOUNT_ID + CLOUDFLARE_API_TOKEN)
 mode: "unrestricted"
 restrict_to_project: false
 skills_root: "./skills"

@@ -117,6 +117,13 @@ Set `model_name` in `config.yaml`:
 | DeepSeek (direct) | `deepseek:deepseek-chat` or `deepseek:deepseek-reasoner` | `DEEPSEEK_API_KEY` |
 | OpenRouter (470+ models) | `openrouter:anthropic/claude-3.5-sonnet` | `OPENROUTER_API_KEY` |
 | [lmarena2api](https://github.com/deanxv/lmarena2api) (self-hosted, LMArena models) | `lmarena:claude-3-5-sonnet-20241022` | `LMARENA_API_KEY` |
+| Groq (free tier) | `groq:llama-3.3-70b-versatile` | `GROQ_API_KEY` |
+| Cerebras (free tier) | `cerebras:llama3.1-8b` | `CEREBRAS_API_KEY` |
+| Mistral AI (free tier) | `mistral:mistral-small-latest` | `MISTRAL_API_KEY` |
+| Cohere (free tier) | `cohere:command-r-plus-08-2024` | `COHERE_API_KEY` |
+| Pollinations.ai (free, no key required) | `pollinations:openai` | `POLLINATIONS_API_KEY` (optional) |
+| Google AI Studio / Gemini (free tier) | `gemini:gemini-2.5-flash-lite` | `GEMINI_API_KEY` |
+| Cloudflare Workers AI (free tier) | `cloudflare:@cf/meta/llama-3.1-8b-instruct` | `CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_API_TOKEN` |
 | Custom OpenAI-compatible endpoint | any name, with `custom_model_url` set | `CUSTOM_MODEL_KEY` |
 
 > `claude-*` model ids routed through **CommandCode** only work via its
@@ -165,6 +172,14 @@ DEEPSEEK_API_KEY=your-key-here
 OPENROUTER_API_KEY=your-key-here
 LMARENA_API_KEY=your-api-secret-here
 LMARENA_BASE_URL=http://localhost:10088/v1
+GROQ_API_KEY=your-key-here
+CEREBRAS_API_KEY=your-key-here
+MISTRAL_API_KEY=your-key-here
+COHERE_API_KEY=your-key-here
+POLLINATIONS_API_KEY=your-key-here
+GEMINI_API_KEY=your-key-here
+CLOUDFLARE_ACCOUNT_ID=your-account-id-here
+CLOUDFLARE_API_TOKEN=your-token-here
 ```
 
 A value already set in your shell environment always takes precedence over
