@@ -1380,7 +1380,8 @@ def main(
         "claude-3-5-sonnet-20241022, lmarena:claude-3-5-sonnet-20241022, "
         "groq:llama-3.3-70b-versatile, cerebras:llama3.1-8b, mistral:mistral-small-latest, "
         "cohere:command-r-plus-08-2024, pollinations:openai, gemini:gemini-2.5-flash-lite, "
-        "cloudflare:@cf/meta/llama-3.1-8b-instruct; or any name if custom_model_url is set).",
+        "cloudflare:@cf/meta/llama-3.1-8b-instruct, ollama-cloud:gpt-oss:120b-cloud; "
+        "or any name if custom_model_url is set).",
     ),
     max_turns: Optional[int] = typer.Option(
         None,

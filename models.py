@@ -777,6 +777,34 @@ class _CloudflareBackend(_ChatCompletionsBackend):
         return super().chat(messages, tools=tools, on_delta=on_delta)
 
 
+def _is_ollama_cloud_model(model_name: str) -> bool:
+    """Return True if model_name starts with the 'ollama-cloud:' prefix."""
+    return model_name.lower().startswith("ollama-cloud:")
+
+
+@dataclass
+class _OllamaCloudBackend(_ChatCompletionsBackend):
+    """
+    Ollama's own hosted inference (ollama.com) — the same model commands as
+    local Ollama, run on Ollama's cloud instead, via its OpenAI-compatible
+    endpoint (confirmed at https://docs.ollama.com/cloud: base URL
+    https://ollama.com/v1, Bearer-token auth). Distinct from the local
+    _OllamaBackend above, which talks to a self-hosted install instead and
+    has no auth.
+
+    Trigger with model_name "ollama-cloud:<model-id>", e.g.
+    "ollama-cloud:gpt-oss:120b-cloud" — use whatever model id
+    https://ollama.com/library currently lists as cloud-hosted.
+
+    Set OLLAMA_API_KEY as an environment variable (create one at
+    https://ollama.com/settings/keys) — never put a real key in
+    config.yaml, which is git-tracked.
+    """
+    base_url: str = "https://ollama.com/v1"
+    api_key: str = field(default_factory=lambda: os.getenv("OLLAMA_API_KEY", ""))
+    label: str = "Ollama Cloud backend"
+
+
 def _is_deepseek_model(model_name: str) -> bool:
     """Return True if model_name starts with the 'deepseek:' prefix."""
     return model_name.lower().startswith("deepseek:")
@@ -1067,6 +1095,7 @@ class ModelClient:
       Pollinations.ai       — model_name like "pollinations:openai" (free, no key required)
       Google AI Studio (Gemini) — model_name like "gemini:gemini-2.5-flash-lite" (free tier)
       Cloudflare Workers AI — model_name like "cloudflare:@cf/meta/llama-3.1-8b-instruct" (free tier)
+      Ollama Cloud          — model_name like "ollama-cloud:gpt-oss:120b-cloud" (hosted, needs OLLAMA_API_KEY)
       Custom endpoint       — set custom_model_url; routes any model_name there
 
     This client never calls any fixed third-party vendor API outside the
@@ -1089,6 +1118,7 @@ class ModelClient:
       GEMINI_API_KEY        — for Google AI Studio (Gemini) models; GOOGLE_API_KEY also accepted
       CLOUDFLARE_ACCOUNT_ID — required to build the Cloudflare Workers AI base URL
       CLOUDFLARE_API_TOKEN  — for Cloudflare Workers AI models
+      OLLAMA_API_KEY         — for Ollama Cloud models (ollama.com hosted)
       CUSTOM_MODEL_KEY      — for the custom_model_url backend, if it needs auth
       OLLAMA_BASE_URL       — override Ollama URL (default: http://localhost:11434)
       OLLAMA_TIMEOUT        — override request timeout in seconds (default: 300)
@@ -1301,6 +1331,9 @@ class ModelClient:
         if _is_cloudflare_model(selected_model):
             real_name = selected_model.split(":", 1)[1] if ":" in selected_model else selected_model
             return _CloudflareBackend(model_name=real_name, timeout=self.timeout)
+        if _is_ollama_cloud_model(selected_model):
+            real_name = selected_model.split(":", 1)[1] if ":" in selected_model else selected_model
+            return _OllamaCloudBackend(model_name=real_name, timeout=self.timeout)
         if _is_anthropic_model(selected_model):
             return _AnthropicBackend(model_name=selected_model, base_url=ANTHROPIC_BASE_URL, timeout=self.timeout)
         return _OllamaBackend(

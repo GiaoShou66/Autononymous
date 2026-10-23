@@ -47,6 +47,9 @@ reasoning_model: "commandcode:deepseek/deepseek-v4-pro"
 #                           Studio's free tier; GOOGLE_API_KEY also accepted)
 #   CLOUDFLARE_ACCOUNT_ID — required alongside CLOUDFLARE_API_TOKEN, for
 #   CLOUDFLARE_API_TOKEN    model_name: "cloudflare:<model-id>" (free daily quota)
+#   OLLAMA_API_KEY        — for model_name: "ollama-cloud:<model-id>", Ollama's
+#                           own hosted inference (ollama.com) — create a key
+#                           at ollama.com/settings/keys
 #   CUSTOM_MODEL_KEY      — for the custom_model_url escape hatch (CUSTOM_MODEL_URL env var), if it needs auth
 # ─── Autonomous Agent Features ────────────────────────────────────────────────
 # Enable advanced autonomous capabilities
@@ -81,6 +84,7 @@ reasoning_enabled: true
 # model_name: "pollinations:openai"  # free, no key required (optional POLLINATIONS_API_KEY)
 # model_name: "gemini:gemini-2.5-flash-lite"  # Google AI Studio free tier (set GEMINI_API_KEY)
 # model_name: "cloudflare:@cf/meta/llama-3.1-8b-instruct"  # free daily quota (set CLOUDFLARE_ACCOUNT_ID + CLOUDFLARE_API_TOKEN)
+# model_name: "ollama-cloud:gpt-oss:120b-cloud"  # Ollama's own hosted inference (set OLLAMA_API_KEY)
 mode: "unrestricted"
 restrict_to_project: false
 skills_root: "./skills"

@@ -124,6 +124,7 @@ Set `model_name` in `config.yaml`:
 | Pollinations.ai (free, no key required) | `pollinations:openai` | `POLLINATIONS_API_KEY` (optional) |
 | Google AI Studio / Gemini (free tier) | `gemini:gemini-2.5-flash-lite` | `GEMINI_API_KEY` |
 | Cloudflare Workers AI (free tier) | `cloudflare:@cf/meta/llama-3.1-8b-instruct` | `CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_API_TOKEN` |
+| [Ollama Cloud](https://docs.ollama.com/cloud) (hosted) | `ollama-cloud:gpt-oss:120b-cloud` | `OLLAMA_API_KEY` |
 | Custom OpenAI-compatible endpoint | any name, with `custom_model_url` set | `CUSTOM_MODEL_KEY` |
 
 > `claude-*` model ids routed through **CommandCode** only work via its
@@ -180,6 +181,7 @@ POLLINATIONS_API_KEY=your-key-here
 GEMINI_API_KEY=your-key-here
 CLOUDFLARE_ACCOUNT_ID=your-account-id-here
 CLOUDFLARE_API_TOKEN=your-token-here
+OLLAMA_API_KEY=your-key-here
 ```
 
 A value already set in your shell environment always takes precedence over
